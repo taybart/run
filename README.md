@@ -1,0 +1,16 @@
+# run
+
+Run a command with the ability to restart it quickly
+
+```
+$ run rest -s -d . -a :8005
+Running rest...
+Press 'r' to reload, 'q' to quit
+2025-03-17 13:02:52 [INFO] listening to :8005...
+// r is pressed
+Reloading script...
+2025-03-17 13:02:55 [INFO] listening to :8005...
+// q is pressed
+Exiting...
+$
+```
