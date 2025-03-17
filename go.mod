@@ -1,4 +1,4 @@
-module github.com/taybart/runner
+module github.com/taybart/run
 
 go 1.24.1
 
