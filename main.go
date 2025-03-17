@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"syscall"
 	"time"
 
@@ -15,7 +14,7 @@ import (
 func main() {
 	log.SetPlain()
 	if len(os.Args) < 2 {
-		fmt.Printf("%sUsage: program <script-to-run> [args...]%s\n", log.Red, log.Rtd)
+		fmt.Printf("%sUsage: run <script-to-run> [args...]%s\n", log.Red, log.Rtd)
 		os.Exit(1)
 	}
 
@@ -23,24 +22,13 @@ func main() {
 	scriptArgs := os.Args[2:]
 
 	// Create channels for communication
-	quitChan := make(chan bool)
-	reloadChan := make(chan bool)
-	doneChan := make(chan bool)
-
-	// Handle Ctrl+C gracefully
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		log.Info("\nReceived interrupt, cleaning up...")
-		keyboard.Close()
-		os.Exit(0)
-	}()
+	quitch := make(chan bool)
+	reloadch := make(chan bool)
+	donech := make(chan bool)
 
 	// Start keyboard handler - this runs continuously throughout the program
 	go func() {
-		err := keyboard.Open()
-		if err != nil {
+		if err := keyboard.Open(); err != nil {
 			log.Errorf("Error opening keyboard: %v\n", err)
 			os.Exit(1)
 		}
@@ -55,11 +43,11 @@ func main() {
 				break
 			}
 
-			if char == 'q' || key == keyboard.KeyEsc {
-				quitChan <- true
+			if char == 'q' || key == keyboard.KeyEsc || key == keyboard.KeyCtrlC {
+				quitch <- true
 				return
 			} else if char == 'r' {
-				reloadChan <- true
+				reloadch <- true
 			}
 		}
 	}()
@@ -67,31 +55,37 @@ func main() {
 	log.Infof("Running: %s\n", script)
 
 	var cmd *exec.Cmd
-	cmd = run(script, scriptArgs, doneChan)
+	cmd = run(script, scriptArgs, donech)
+	if cmd == nil {
+		log.Fatal("Something went wrong")
+	}
 
 	for {
 		select {
-		case <-quitChan:
+		case <-quitch:
 			log.Infof("\n%sExiting...%s\n", log.Green, log.Rtd)
 			if cmd != nil && cmd.Process != nil {
 				kill(cmd)
 			}
 			return
-		case <-reloadChan:
+		case <-reloadch:
 			log.Infof("%s\nReloading script...%s\n", log.Green, log.Rtd)
 			if cmd != nil && cmd.Process != nil {
 				kill(cmd)
 			}
 			// Small delay to ensure process termination
 			time.Sleep(500 * time.Millisecond)
-			cmd = run(script, scriptArgs, doneChan)
-		case <-doneChan:
+			cmd = run(script, scriptArgs, donech)
+			if cmd == nil {
+				log.Fatal("Something went wrong")
+			}
+		case <-donech:
 			log.Debug("Script execution completed")
 		}
 	}
 }
 
-func run(script string, args []string, doneChan chan<- bool) *exec.Cmd {
+func run(script string, args []string, donech chan<- bool) *exec.Cmd {
 	cmd := exec.Command(script, args...)
 
 	// Set process group for better process management
@@ -104,16 +98,16 @@ func run(script string, args []string, doneChan chan<- bool) *exec.Cmd {
 
 	if err := cmd.Start(); err != nil {
 		log.Error("Could not start script: %v\n", err)
-		if doneChan != nil {
-			doneChan <- true
+		if donech != nil {
+			donech <- true
 		}
 		return nil
 	}
 
 	go func() {
 		cmd.Wait()
-		if doneChan != nil {
-			doneChan <- true
+		if donech != nil {
+			donech <- true
 		}
 	}()
 
@@ -132,13 +126,13 @@ func kill(cmd *exec.Cmd) {
 	if pgid, err := syscall.Getpgid(cmd.Process.Pid); err == nil {
 		log.Debugf("using unix-like termination on pid: %d\n", pgid)
 		syscall.Kill(-pgid, syscall.SIGTERM)
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		syscall.Kill(-pgid, syscall.SIGKILL)
 	} else {
 		log.Debugf("%susing fallback go kill method%s\n", log.Red, log.Rtd)
 		// Fallback if process group not available
 		cmd.Process.Signal(syscall.SIGTERM)
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		cmd.Process.Kill()
 	}
 }
