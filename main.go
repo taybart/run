@@ -21,6 +21,9 @@ func main() {
 	script := os.Args[1]
 	scriptArgs := os.Args[2:]
 
+	log.Infof("%sRunning %s...%s\n", log.Blue, script, log.Rtd)
+	log.Infof("%sPress 'r' to reload, 'q' to quit%s\n", log.Yellow, log.Rtd)
+
 	// Create channels for communication
 	quitch := make(chan bool)
 	reloadch := make(chan bool)
@@ -33,8 +36,6 @@ func main() {
 			os.Exit(1)
 		}
 		defer keyboard.Close()
-
-		log.Infof("%sPress 'r' to reload, 'q' to quit%s\n", log.Blue, log.Rtd)
 
 		for {
 			char, key, err := keyboard.GetKey()
@@ -51,8 +52,6 @@ func main() {
 			}
 		}
 	}()
-
-	log.Infof("Running: %s\n", script)
 
 	var cmd *exec.Cmd
 	cmd = run(script, scriptArgs, donech)
@@ -116,11 +115,11 @@ func run(script string, args []string, donech chan<- bool) *exec.Cmd {
 
 func kill(cmd *exec.Cmd) {
 	if cmd.Process == nil {
-		log.Warn("no process")
+		log.Warn("no process to terminate")
 		return
 	}
 
-	log.Infof("Terminating process...%d\n", cmd.Process.Pid)
+	log.Debugf("terminating process...%d\n", cmd.Process.Pid)
 
 	// On Unix-like systems, use process groups to kill all children
 	if pgid, err := syscall.Getpgid(cmd.Process.Pid); err == nil {
