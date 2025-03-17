@@ -24,12 +24,12 @@ func main() {
 	log.Infof("%sRunning %s...%s\n", log.Blue, script, log.Rtd)
 	log.Infof("%sPress 'r' to reload, 'q' to quit%s\n", log.Yellow, log.Rtd)
 
-	// Create channels for communication
+	// communication channels
 	quitch := make(chan bool)
 	reloadch := make(chan bool)
 	donech := make(chan bool)
 
-	// Start keyboard handler - this runs continuously throughout the program
+	// start keyboard handler
 	go func() {
 		if err := keyboard.Open(); err != nil {
 			log.Errorf("Error opening keyboard: %v\n", err)
@@ -53,20 +53,22 @@ func main() {
 		}
 	}()
 
-	var cmd *exec.Cmd
-	cmd = run(script, scriptArgs, donech)
+	// start script
+	cmd := run(script, scriptArgs, donech)
 	if cmd == nil {
 		log.Fatal("Something went wrong")
 	}
 
 	for {
 		select {
+		// q/esc/ctrl+c hit
 		case <-quitch:
 			log.Infof("\n%sExiting...%s\n", log.Green, log.Rtd)
 			if cmd != nil && cmd.Process != nil {
 				kill(cmd)
 			}
 			return
+		// r hit
 		case <-reloadch:
 			log.Infof("%s\nReloading script...%s\n", log.Green, log.Rtd)
 			if cmd != nil && cmd.Process != nil {
@@ -115,7 +117,7 @@ func run(script string, args []string, donech chan<- bool) *exec.Cmd {
 
 func kill(cmd *exec.Cmd) {
 	if cmd.Process == nil {
-		log.Warn("no process to terminate")
+		log.Warn("No process to terminate")
 		return
 	}
 
@@ -128,8 +130,8 @@ func kill(cmd *exec.Cmd) {
 		time.Sleep(100 * time.Millisecond)
 		syscall.Kill(-pgid, syscall.SIGKILL)
 	} else {
-		log.Debugf("%susing fallback go kill method%s\n", log.Red, log.Rtd)
 		// Fallback if process group not available
+		log.Debugf("%susing fallback go kill method%s\n", log.Red, log.Rtd)
 		cmd.Process.Signal(syscall.SIGTERM)
 		time.Sleep(100 * time.Millisecond)
 		cmd.Process.Kill()
