@@ -2,7 +2,7 @@
 
 Run a command with the ability to restart it quickly
 
-```
+```sh
 $ run rest -s -d . -a :8005
 Running rest...
 Press 'r' to reload, 'q' to quit
@@ -10,7 +10,6 @@ Press 'r' to reload, 'q' to quit
 // r is pressed
 Reloading script...
 2025-03-17 13:02:55 [INFO] listening to :8005...
-// q is pressed
+// q (or esc or ctrl+c) is pressed
 Exiting...
-$
 ```
