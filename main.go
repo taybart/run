@@ -44,6 +44,9 @@ func main() {
 				break
 			}
 
+			if key == keyboard.KeyEnter {
+				fmt.Println()
+			}
 			if char == 'q' || key == keyboard.KeyEsc || key == keyboard.KeyCtrlC {
 				quitch <- true
 				return
