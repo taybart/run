@@ -59,7 +59,7 @@ func main() {
 	// start script
 	cmd := run(script, scriptArgs, donech)
 	if cmd == nil {
-		log.Fatal("Something went wrong")
+		return
 	}
 
 	for {
@@ -101,10 +101,7 @@ func run(script string, args []string, donech chan<- bool) *exec.Cmd {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		log.Error("Could not start script: %v\n", err)
-		if donech != nil {
-			donech <- true
-		}
+		log.Errorf("could not start script: %s%v%s\n", log.Red, err, log.Reset)
 		return nil
 	}
 
