@@ -1,7 +1,8 @@
-package main
+package run
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"syscall"
@@ -11,21 +12,10 @@ import (
 	"github.com/taybart/log"
 )
 
-func main() {
-	log.SetPlain()
-	if len(os.Args) < 2 {
-		fmt.Printf("%sUsage: run <script-to-run> [args...]%s\n", log.Red, log.Rtd)
-		os.Exit(1)
-	}
-
-	script := os.Args[1]
-	scriptArgs := os.Args[2:]
-
-	log.Infof("%sRunning %s...%s\n", log.Blue, script, log.Rtd)
-	log.Infof("%sPress 'r' to reload, 'q' to quit%s\n", log.Yellow, log.Rtd)
-
+func Do(script string, scriptArgs []string, tryDaemon bool) {
 	// communication channels
 	quitch := make(chan bool)
+	reconnch := make(chan bool)
 	reloadch := make(chan bool)
 	donech := make(chan bool)
 
@@ -50,11 +40,18 @@ func main() {
 			if char == 'q' || key == keyboard.KeyEsc || key == keyboard.KeyCtrlC {
 				quitch <- true
 				return
+			} else if char == 'c' {
+				reconnch <- true
 			} else if char == 'r' {
 				reloadch <- true
 			}
 		}
 	}()
+
+	if tryDaemon {
+		// start daemon
+		go connect(quitch, reloadch, script, scriptArgs)
+	}
 
 	// start script
 	cmd := run(script, scriptArgs, donech)
@@ -71,6 +68,11 @@ func main() {
 				kill(cmd)
 			}
 			return
+		case <-reconnch:
+			if tryDaemon {
+				log.Infof("\n%sReconnecting...%s\n", log.Green, log.Rtd)
+				go connect(quitch, reloadch, script, scriptArgs)
+			}
 		// r hit
 		case <-reloadch:
 			log.Infof("%s\nReloading script...%s\n", log.Green, log.Rtd)
@@ -135,5 +137,41 @@ func kill(cmd *exec.Cmd) {
 		cmd.Process.Signal(syscall.SIGTERM)
 		time.Sleep(100 * time.Millisecond)
 		cmd.Process.Kill()
+	}
+}
+
+// connect to run-daemon
+func connect(quitch, reloadch chan bool, script string, scriptArgs []string) {
+	bus, err := NewBus(nil)
+	if err != nil {
+		fmt.Printf("%s...daemon unavailable...%s\n", log.ItalicYellow, log.Rtd)
+		return
+	}
+	workingDir, err := os.Getwd()
+	if err != nil {
+		fmt.Printf("%sError getting working directory: %s%s\n", log.Red, err, log.Rtd)
+		return
+	}
+
+	pl := Process{Dir: workingDir, Script: script, Args: scriptArgs}
+	bus.Write(Message{Action: ActionJoin, Payload: pl})
+	// fmt.Println("listening to daemon...")
+	for {
+		msg, err := bus.Read()
+		if err != nil {
+			if err != io.EOF {
+				fmt.Printf("%sError: %s%s\n", log.Red, err, log.Rtd)
+			}
+			break
+		}
+
+		switch msg.Action {
+		case ActionJoinAck:
+			fmt.Printf("%sRegistered with daemon%s\n", log.ItalicGreen, log.Rtd)
+		case ActionReset:
+			reloadch <- true
+		case ActionLeave:
+			quitch <- true
+		}
 	}
 }

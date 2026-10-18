@@ -1,0 +1,23 @@
+locals {
+  url = "http://localhost:19230"
+  dir = env("PWD")
+}
+request "list" {
+  url = "${locals.url}/list"
+  query = { dir = locals.dir }
+  # after = <<LUA
+  #   inspect.print(json.decode(rest.res.body))
+  # LUA
+}
+
+request "restart" {
+  url = "${locals.url}/restart"
+  method = "POST"
+  body = {
+    dir = locals.dir,
+    script = "./test.sh",
+    args = [ 
+    # "numba2" 
+    ]
+  }
+}
