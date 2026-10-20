@@ -1,10 +1,28 @@
+#!/usr/bin/env rest
+
 locals {
   url = "http://localhost:19230"
   dir = env("PWD")
 }
+
+cli {
+  flags = {
+    list-dir = {
+      desc = "The directory to list"
+      default = locals.dir
+    }
+  }
+  fn = <<LUA
+    if cli["list-dir"] then
+      rest.exports.dir = cli["list-dir"]
+    end
+    rest.label("list")
+  LUA
+}
+
 request "list" {
   url = "${locals.url}/list"
-  query = { dir = locals.dir }
+  query = { dir = try_exports("dir", locals.dir) }
   after = <<LUA
     inspect.print(json.decode(rest.res.body))
   LUA
