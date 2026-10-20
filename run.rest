@@ -32,10 +32,8 @@ request "restart" {
   url = "${locals.url}/restart"
   method = "POST"
   body = {
-    dir = locals.dir,
+    dir = try_exports("dir", locals.dir),
     script = "./test.sh",
-    args = [ 
-    # "numba2" 
-    ]
+    args = [ /* "numba2" */ ]
   }
 }
