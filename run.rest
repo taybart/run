@@ -10,19 +10,19 @@ locals {
 cli {
   flags = {
     dir = {
-      desc = "The directory to list or restart"
-      short = "d"
+      desc    = "The directory to list or restart"
+      short   = "d"
       default = locals.dir
     }
     mcp = {
       desc = "Run an MCP command"
     }
     restart = {
-      desc = "Restart service"
+      desc  = "Restart service"
       short = "r"
     }
     args = {
-      desc = "Arguments for the script"
+      desc  = "Arguments for the script"
       short = "a"
     }
   }
@@ -52,7 +52,7 @@ cli {
 }
 
 request "list" {
-  url = "${locals.url}/list"
+  url   = "${locals.url}/list"
   query = { dir = try_exports("dir", locals.dir) }
   after = <<LUA
     inspect.print(json.decode(rest.res.body))
@@ -60,20 +60,20 @@ request "list" {
 }
 
 request "restart" {
-  url = "${locals.url}/restart"
+  url    = "${locals.url}/restart"
   method = "POST"
   body = {
-    dir = try_exports("dir", locals.dir),
+    dir    = try_exports("dir", locals.dir),
     script = try_exports("script", "./test.sh")
-    args = try_exports("args", [])
+    args   = try_exports("args", [])
   }
 }
 
 request "mcp.list_tools" {
-  url = "${locals.url}/mcp"
+  url    = "${locals.url}/mcp"
   method = "POST"
-  body = { jsonrpc: "2.0", id: 1, method: "tools/list" }
-  after = <<LUA
+  body   = { jsonrpc : "2.0", id : 1, method : "tools/list" }
+  after  = <<LUA
     inspect.print(json.decode(rest.res.body))
   LUA
 }
