@@ -1,5 +1,7 @@
 #!/usr/bin/env rest
 
+config { no_flags = true }
+
 locals {
   url = "http://localhost:19230"
   dir = env("PWD")
@@ -7,14 +9,43 @@ locals {
 
 cli {
   flags = {
-    list-dir = {
-      desc = "The directory to list"
+    dir = {
+      desc = "The directory to list or restart"
+      short = "d"
       default = locals.dir
+    }
+    mcp = {
+      desc = "Run an MCP command"
+    }
+    restart = {
+      desc = "Restart service"
+      short = "r"
+    }
+    args = {
+      desc = "Arguments for the script"
+      short = "a"
     }
   }
   fn = <<LUA
-    if cli["list-dir"] then
-      rest.exports.dir = cli["list-dir"]
+    if cli.mcp then
+      rest.label("mcp."..cli["mcp"])
+      return
+    end
+    if cli.directory then
+      rest.exports.dir = cli.directory
+    end
+    if cli.restart then
+      rest.exports.restart = cli.restart
+      -- todo parse csl into array
+      if cli.args then
+        local arr = {}
+        for a in cli.args:gmatch("[^,]+") do
+          table.insert(arr, a)
+        end
+        rest.exports.args = arr
+      end
+      rest.label("restart")
+      return
     end
     rest.label("list")
   LUA
@@ -33,19 +64,15 @@ request "restart" {
   method = "POST"
   body = {
     dir = try_exports("dir", locals.dir),
-    script = "./test.sh",
-    args = [ /* "numba2" */ ]
+    script = try_exports("script", "./test.sh")
+    args = try_exports("args", [])
   }
 }
 
-request "mcp_list_tools" {
+request "mcp.list_tools" {
   url = "${locals.url}/mcp"
   method = "POST"
-  body = {
-    jsonrpc = "2.0"
-    id = 1
-    method = "tools/list"
-  }
+  body = { jsonrpc: "2.0", id: 1, method: "tools/list" }
   after = <<LUA
     inspect.print(json.decode(rest.res.body))
   LUA
