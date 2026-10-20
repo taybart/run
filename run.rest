@@ -37,3 +37,16 @@ request "restart" {
     args = [ /* "numba2" */ ]
   }
 }
+
+request "mcp_list_tools" {
+  url = "${locals.url}/mcp"
+  method = "POST"
+  body = {
+    jsonrpc = "2.0"
+    id = 1
+    method = "tools/list"
+  }
+  after = <<LUA
+    inspect.print(json.decode(rest.res.body))
+  LUA
+}
