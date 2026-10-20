@@ -5,9 +5,9 @@ locals {
 request "list" {
   url = "${locals.url}/list"
   query = { dir = locals.dir }
-  # after = <<LUA
-  #   inspect.print(json.decode(rest.res.body))
-  # LUA
+  after = <<LUA
+    inspect.print(json.decode(rest.res.body))
+  LUA
 }
 
 request "restart" {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,15 +18,34 @@ func (s *Server) handleList() http.HandlerFunc {
 		q := r.URL.Query()
 		dir := q.Get("dir")
 		if dir == "" {
-			w.WriteHeader(http.StatusBadRequest)
+			http.Error(w, "missing dir", http.StatusBadRequest)
+			return
 		}
-		res := make([]run.Process, 0, len(s.targets[dir]))
-		for _, t := range s.targets[dir] {
-			res = append(res, run.Process{
-				Script: t.script,
-				Args:   t.args,
-			})
+		dir = filepath.Clean(dir)
+		prefix := dir
+		if !strings.HasSuffix(prefix, string(filepath.Separator)) { // "/" already ends with one
+			prefix += string(filepath.Separator)
 		}
+
+		keys := make([]string, 0)
+		for k := range s.targets {
+			if k == dir || strings.HasPrefix(k, prefix) {
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+
+		res := make([]run.Process, 0, len(keys))
+		for _, k := range keys {
+			for _, t := range s.targets[k] {
+				res = append(res, run.Process{
+					Dir:    k,
+					Script: t.script,
+					Args:   t.args,
+				})
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(res); err != nil {
 			fmt.Println(err)

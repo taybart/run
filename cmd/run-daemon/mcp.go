@@ -108,16 +108,9 @@ func (s *Server) handleMCP() http.HandlerFunc {
 	}
 }
 
-// mcpProtocolVersion is the only version this server actually implements:
-// the classic initialize/initialized handshake ("Legacy" in newer tooling,
-// as opposed to the handshake-less 2026-07-28 revision). The spec allows
-// responding with a version the client didn't ask for; it's on the client
-// to decide whether to proceed.
-const mcpProtocolVersion = "2025-11-25"
-
 func mcpInitialize() map[string]any {
 	return map[string]any{
-		"protocolVersion": mcpProtocolVersion,
+		"protocolVersion": "2025-11-25",
 		"capabilities": map[string]any{
 			"tools": map[string]any{},
 		},
