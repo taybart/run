@@ -24,3 +24,5 @@ Press 'r' to reload, 'q' to quit
 2025-03-17 13:02:52 [INFO] listening to :8005...
 $ curl http://localhost:16354/restart?d=%2Fhome%2Fuser&p=8005
 ```
+
+There is an mcp endpoint to restart the process at `http://localhost:19320/mcp`
