@@ -26,3 +26,7 @@ $ curl http://localhost:16354/restart?d=%2Fhome%2Fuser&p=8005
 ```
 
 There is an mcp endpoint to restart the process at `http://localhost:19230/mcp`
+
+# TODO
+
+- [ ] grab logs from running process (maybe keep last 100 lines?)
