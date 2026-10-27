@@ -3,8 +3,10 @@
 config { no_flags = true }
 
 locals {
-  url = "http://localhost:19230"
-  dir = env("PWD")
+  url    = "http://localhost:19230"
+  dir    = env("PWD")
+  script = ""
+  args   = {}
 }
 
 cli {
@@ -13,6 +15,9 @@ cli {
       desc    = "The directory to list or restart"
       short   = "d"
       default = locals.dir
+    }
+    list = {
+      desc = "List running services in directory and lower"
     }
     mcp = {
       desc = "Run an MCP command"
@@ -26,17 +31,16 @@ cli {
       short = "a"
     }
   }
-  fn = <<LUA
+  fn   = <<LUA
     if cli.mcp then
       rest.label("mcp."..cli["mcp"])
       return
     end
-    if cli.directory then
-      rest.exports.dir = cli.directory
+    if cli.dir then
+      rest.exports.dir = cli.dir
     end
     if cli.restart then
-      rest.exports.restart = cli.restart
-      -- todo parse csl into array
+      rest.exports.script = cli.restart
       if cli.args then
         local arr = {}
         for a in cli.args:gmatch("[^,]+") do
@@ -47,7 +51,32 @@ cli {
       rest.label("restart")
       return
     end
+    if cli.list then
+      rest.label("list")
+      return
+    end
+    rest.exports.repl = true
+    rest.exports.original = {
+      dir = cli.dir,
+    }
     rest.label("list")
+    rest.loop()
+  LUA
+  loop = <<LUA
+    if input == "ls" then
+      rest.exports.dir = rest.exports.original.dir
+      rest.label("list")
+      goto continue
+    end
+
+    local srv = rest.exports.services[tonumber(input)]
+    if srv then
+      rest.exports.dir = srv.dir
+      rest.exports.script = srv.script
+      rest.exports.args = srv.args or {}
+      rest.label("restart") 
+      print('done')
+    end
   LUA
 }
 
@@ -55,7 +84,15 @@ request "list" {
   url   = "${locals.url}/list"
   query = { dir = try_exports("dir", locals.dir) }
   after = <<LUA
-    inspect.print(json.decode(rest.res.body))
+    rest.exports.services = json.decode(rest.res.body)
+    if not rest.exports.repl then
+      inspect.print(rest.exports.services)
+    else
+      for i, service in ipairs(rest.exports.services) do
+        -- print(("%s %s"):format(i, inspect(service)))
+        print(("%s %s%s %s"):format(i, service.dir, service.script, inspect(service.args)))
+      end
+    end
   LUA
 }
 
@@ -64,16 +101,16 @@ request "restart" {
   method = "POST"
   body = {
     dir    = try_exports("dir", locals.dir),
-    script = try_exports("script", "./test.sh")
-    args   = try_exports("args", [])
+    script = try_exports("script", locals.script)
+    args   = try_exports("args", locals.args)
   }
+  expect = 200
+  after  = [lib.expected]
 }
 
 request "mcp.list_tools" {
   url    = "${locals.url}/mcp"
   method = "POST"
   body   = { jsonrpc : "2.0", id : 1, method : "tools/list" }
-  after  = <<LUA
-    inspect.print(json.decode(rest.res.body))
-  LUA
+  after  = [lib.print_body]
 }
