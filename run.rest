@@ -17,7 +17,9 @@ cli {
       default = locals.dir
     }
     list = {
-      desc = "List running services in directory and lower"
+      short = "l"
+      desc  = "List running services in directory and lower"
+      bool  = true
     }
     mcp = {
       desc = "Run an MCP command"
@@ -85,12 +87,11 @@ request "list" {
   query = { dir = try_exports("dir", locals.dir) }
   after = <<LUA
     rest.exports.services = json.decode(rest.res.body)
-    if not rest.exports.repl then
-      inspect.print(rest.exports.services)
-    else
       for i, service in ipairs(rest.exports.services) do
-        -- print(("%s %s"):format(i, inspect(service)))
-        print(("%s %s%s %s"):format(i, service.dir, service.script, inspect(service.args)))
+        if not rest.exports.repl then
+            print(("%s %s %s"):format(service.dir, service.script, inspect(service.args)))
+        else
+        print(("%s %s %s %s"):format(i, service.dir, service.script, inspect(service.args)))
       end
     end
   LUA
