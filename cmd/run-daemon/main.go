@@ -23,20 +23,12 @@ func main() {
 	}
 }
 
-type Target struct {
-	script string
-	args   []string
-	bus    *run.Bus
-}
-
 type Server struct {
-	targets map[string]map[string]*Target
+	targets *targets
 }
 
 func newServer() *Server {
-	return &Server{
-		targets: make(map[string]map[string]*Target),
-	}
+	return &Server{targets: newTargets()}
 }
 
 func (s *Server) Listen() error {

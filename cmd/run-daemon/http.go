@@ -2,11 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -27,24 +27,9 @@ func (s *Server) handleList() http.HandlerFunc {
 			prefix += string(filepath.Separator)
 		}
 
-		keys := make([]string, 0)
-		for k := range s.targets {
-			if k == dir || strings.HasPrefix(k, prefix) {
-				keys = append(keys, k)
-			}
-		}
-		sort.Strings(keys)
-
-		res := make([]run.Process, 0, len(keys))
-		for _, k := range keys {
-			for _, t := range s.targets[k] {
-				res = append(res, run.Process{
-					Dir:    k,
-					Script: t.script,
-					Args:   t.args,
-				})
-			}
-		}
+		res := s.targets.list(func(k string) bool {
+			return k == dir || strings.HasPrefix(k, prefix)
+		})
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(res); err != nil {
@@ -66,17 +51,16 @@ func (s *Server) handleRestart() http.HandlerFunc {
 			return
 		}
 		fmt.Printf("restarting: dir(%s) $ %s %s\n", req.Dir, req.Script, strings.Join(req.Args, " "))
-		// FIXME: this will break if there are two of the same thing (directory/script/args) running
-		//        i don't know if i really know why i would ever need to do this but we will get there when we get there
-		reqKey := makeKey(req)
-		for k, t := range s.targets[req.Dir] {
-			if k == reqKey {
-				t.bus.Write(run.Message{Action: run.ActionReset})
-				fmt.Fprintf(w, "restarted %s\n", t.script)
-				return
-			}
+		n, err := s.targets.restart(req)
+		if errors.Is(err, errNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
-		w.WriteHeader(http.StatusNotFound)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintf(w, "restarted %s (%d)\n", req.Script, n)
 	}
 }
 

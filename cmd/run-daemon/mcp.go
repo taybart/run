@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/taybart/run"
@@ -148,12 +149,9 @@ func (s *Server) mcpListScripts(args json.RawMessage) (*mcpCallResult, *rpcError
 		return nil, &rpcError{Code: -32602, Message: "dir is required"}
 	}
 
-	res := make([]run.Process, 0, len(s.targets[a.Dir]))
-	for _, t := range s.targets[a.Dir] {
-		res = append(res, run.Process{
-			Script: t.script,
-			Args:   t.args,
-		})
+	res := s.targets.list(func(dir string) bool { return dir == a.Dir })
+	for i := range res {
+		res[i].Dir = "" // (it's the one asked for)
 	}
 
 	text, err := json.Marshal(res)
@@ -169,20 +167,12 @@ func (s *Server) mcpRestartScript(args json.RawMessage) (*mcpCallResult, *rpcErr
 		return nil, &rpcError{Code: -32602, Message: "dir and script are required"}
 	}
 
-	reqKey := makeKey(req)
-	for k, t := range s.targets[req.Dir] {
-		if k == reqKey {
-			if err := t.bus.Write(run.Message{Action: run.ActionReset}); err != nil {
-				return &mcpCallResult{
-					Content: []mcpContent{{Type: "text", Text: "failed to restart " + t.script + ": " + err.Error()}},
-					IsError: true,
-				}, nil
-			}
-			return &mcpCallResult{Content: []mcpContent{{Type: "text", Text: "restarted " + t.script}}}, nil
+	if _, err := s.targets.restart(req); err != nil {
+		text := "failed to restart " + req.Script + ": " + err.Error()
+		if errors.Is(err, errNotFound) {
+			text = errNotFound.Error()
 		}
+		return &mcpCallResult{Content: []mcpContent{{Type: "text", Text: text}}, IsError: true}, nil
 	}
-	return &mcpCallResult{
-		Content: []mcpContent{{Type: "text", Text: "no matching script found"}},
-		IsError: true,
-	}, nil
+	return &mcpCallResult{Content: []mcpContent{{Type: "text", Text: "restarted " + req.Script}}}, nil
 }

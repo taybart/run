@@ -1,10 +1,14 @@
 package run
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
+	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -12,14 +16,26 @@ import (
 	"github.com/taybart/log"
 )
 
-func Do(script string, scriptArgs []string, tryDaemon bool) {
+// Do runs script, restarting it on r, a daemon restart, or (w/ watch, a list
+// of file extensions or "*") when files in the working directory change.
+func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) {
 	// communication channels
 	quitch := make(chan bool)
 	reconnch := make(chan bool)
 	reloadch := make(chan bool)
 	donech := make(chan bool)
 
+	// signals (ex. kill, a closed terminal) quit like q: the script is in its
+	// own process group, so w/o this it would keep running after run exits
+	sigch := make(chan os.Signal, 1)
+	signal.Notify(sigch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		<-sigch
+		quitch <- true
+	}()
+
 	// start keyboard handler
+	var quitting atomic.Bool
 	go func() {
 		if err := keyboard.Open(); err != nil {
 			log.Errorf("Error opening keyboard: %v\n", err)
@@ -30,7 +46,9 @@ func Do(script string, scriptArgs []string, tryDaemon bool) {
 		for {
 			char, key, err := keyboard.GetKey()
 			if err != nil {
-				log.Error("Error reading keyboard: %v\n", err)
+				if !quitting.Load() { // (closing the keyboard cancels GetKey)
+					log.Errorf("Error reading keyboard: %v\n", err)
+				}
 				break
 			}
 
@@ -48,9 +66,20 @@ func Do(script string, scriptArgs []string, tryDaemon bool) {
 		}
 	}()
 
+	// one connection to the daemon at a time, c replaces it
+	var daemon *Bus
+	joinDaemon := func() {
+		if daemon != nil {
+			daemon.Close()
+		}
+		daemon = connect(quitch, reloadch, script, scriptArgs)
+	}
 	if tryDaemon {
-		// start daemon
-		go connect(quitch, reloadch, script, scriptArgs)
+		joinDaemon()
+	}
+
+	if len(watchExts) > 0 {
+		go watch(".", watchExts, pollInterval, reloadch)
 	}
 
 	// start script
@@ -67,11 +96,16 @@ func Do(script string, scriptArgs []string, tryDaemon bool) {
 			if cmd != nil && cmd.Process != nil {
 				kill(cmd)
 			}
+			if daemon != nil {
+				daemon.Close() // (leaves right away)
+			}
+			quitting.Store(true)
+			keyboard.Close() // restore the terminal
 			return
 		case <-reconnch:
 			if tryDaemon {
 				log.Infof("\n%sReconnecting...%s\n", log.Green, log.Rtd)
-				go connect(quitch, reloadch, script, scriptArgs)
+				joinDaemon()
 			}
 		// r hit
 		case <-reloadch:
@@ -140,26 +174,34 @@ func kill(cmd *exec.Cmd) {
 	}
 }
 
-// connect to run-daemon
-func connect(quitch, reloadch chan bool, script string, scriptArgs []string) {
-	bus, err := NewBus(nil)
-	if err != nil {
-		fmt.Printf("%s...daemon unavailable...%s\n", log.ItalicYellow, log.Rtd)
-		return
-	}
+// connect joins run-daemon (nil if it isn't running) and listens to it in
+// the background, closing the bus leaves
+func connect(quitch, reloadch chan bool, script string, scriptArgs []string) *Bus {
 	workingDir, err := os.Getwd()
 	if err != nil {
 		fmt.Printf("%sError getting working directory: %s%s\n", log.Red, err, log.Rtd)
-		return
+		return nil
 	}
-
+	bus, err := NewBus(nil)
+	if err != nil {
+		fmt.Printf("%s...daemon unavailable...%s\n", log.ItalicYellow, log.Rtd)
+		return nil
+	}
 	pl := Process{Dir: workingDir, Script: script, Args: scriptArgs}
-	bus.Write(Message{Action: ActionJoin, Payload: pl})
-	// fmt.Println("listening to daemon...")
+	if err := bus.Write(Message{Action: ActionJoin, Payload: pl}); err != nil {
+		fmt.Printf("%sError joining daemon: %s%s\n", log.Red, err, log.Rtd)
+		bus.Close()
+		return nil
+	}
+	go listen(bus, quitch, reloadch)
+	return bus
+}
+
+func listen(bus *Bus, quitch, reloadch chan bool) {
 	for {
 		msg, err := bus.Read()
 		if err != nil {
-			if err != io.EOF {
+			if err != io.EOF && !errors.Is(err, net.ErrClosed) {
 				fmt.Printf("%sError: %s%s\n", log.Red, err, log.Rtd)
 			}
 			break

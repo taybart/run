@@ -14,6 +14,29 @@ Reloading script...
 Exiting...
 ```
 
+### watch mode
+
+`-w` restarts the script when files with those extensions change in the
+current directory (and below), `-w '*'` for any file. Dot files/folders
+(`.git`) and `node_modules` are skipped.
+
+```sh
+$ run -w mn,rest,css rest -s -f .
+Running rest...
+Watching for changes to: mn, rest, css
+Press 'r' to reload, 'q' to quit
+// src/app.mn is saved
+src/app.mn changed
+Reloading script...
+```
+
+Flags stop at the script, so its own flags are passed through
+(`run -w mn -- rest -s` works too). It polls file times and sizes every 500ms
+instead of using file events, so it works the same on macOS and Linux and
+sees editors that save by renaming a temp file. A burst of saves is one
+restart. Don't watch files the script itself writes, or it'll restart in a
+loop.
+
 ### daemon mode
 
 ```sh
