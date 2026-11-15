@@ -37,6 +37,32 @@ sees editors that save by renaming a temp file. A burst of saves is one
 restart. Don't watch files the script itself writes, or it'll restart in a
 loop.
 
+#### handling changes in the script (fd 3)
+
+A script can handle `-w` changes itself instead of being restarted. Every
+script gets a socket on fd 3 (and `RUN_EVENTS_FD=3`). A script that doesn't
+use it never notices. One that writes `hello` to it gets each batch of changes
+instead of a restart:
+
+```
+change modified src/docs/intro.md
+change added public/img/new.png
+change removed src/old.mn
+done
+```
+
+It can write `restart` to get restarted anyway (ex. for a change it can't
+handle). `r` and daemon restarts are always restarts. If it stops reading,
+it's restarted instead of run waiting on it.
+
+```sh
+#!/bin/sh
+echo hello >&3
+while read -r kind what path <&3; do
+  [ "$kind" = done ] && echo "end of batch" || echo "$what: $path"
+done
+```
+
 ### daemon mode
 
 `run-daemon` keeps track of every `run` (in a terminal) so they can be listed

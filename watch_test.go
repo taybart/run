@@ -74,23 +74,26 @@ func TestChanged(t *testing.T) {
 	}
 }
 
-// a burst of saves is one reload, once they settle
+// a burst of saves is one batch, once they settle, w/ what's different from
+// before it
 func TestWatch(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "app.mn"), "1")
-	reloadch := make(chan bool, 10)
-	go watch(dir, []string{"mn"}, 20*time.Millisecond, reloadch)
+	write(t, filepath.Join(dir, "old.mn"), "1")
+	changech := make(chan []Change, 10)
+	go watch(dir, []string{"mn"}, 20*time.Millisecond, changech)
 	time.Sleep(50 * time.Millisecond)
 
-	// an ignored file doesn't reload
+	// an ignored file doesn't count
 	write(t, filepath.Join(dir, "notes.txt"), "x")
 	select {
-	case <-reloadch:
-		t.Fatal("reloaded for an unwatched extension")
+	case c := <-changech:
+		t.Fatalf("changes for an unwatched extension: %v", c)
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	// atomic save: write a temp file and rename it over the original
+	// atomic saves (a temp file renamed over the original), a new file and
+	// a removed one, all at once
 	for i := range 3 {
 		tmp := filepath.Join(dir, "app.mn.tmp")
 		write(t, tmp, "saved"+string(rune('a'+i)))
@@ -99,14 +102,35 @@ func TestWatch(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+	write(t, filepath.Join(dir, "src", "new.mn"), "x")
+	os.Remove(filepath.Join(dir, "old.mn"))
+
+	var got []Change
 	select {
-	case <-reloadch:
+	case got = <-changech:
 	case <-time.After(time.Second):
-		t.Fatal("no reload after a change")
+		t.Fatal("no changes")
+	}
+	want := []Change{
+		{"modified", "app.mn"},
+		{"removed", "old.mn"},
+		{"added", filepath.Join("src", "new.mn")},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 	select {
-	case <-reloadch:
-		t.Fatal("a burst of saves reloaded more than once")
+	case c := <-changech:
+		t.Fatalf("a burst of saves was more than one batch: %v", c)
 	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+func TestDescribe(t *testing.T) {
+	if got := describe([]Change{{"modified", "a.md"}}); got != "a.md modified" {
+		t.Error(got)
+	}
+	if got := describe([]Change{{"modified", "a.md"}, {"added", "b.md"}}); got != "2 files changed" {
+		t.Error(got)
 	}
 }

@@ -64,7 +64,7 @@ func TestReport(t *testing.T) {
 			out := newOutputLog(1 << 10)
 			out.Write([]byte("from before the restart\n"))
 			mark := out.mark()
-			p, err := run(tc.script, nil, out)
+			p, err := run(tc.script, nil, out, nil)
 			if p != nil {
 				defer kill(p.cmd)
 			}

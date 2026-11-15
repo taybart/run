@@ -34,7 +34,9 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 	quitch := make(chan bool)
 	reconnch := make(chan bool)
 	reloadch := make(chan bool)
-	resetch := make(chan int) // daemon restarts, by id (to reply to)
+	resetch := make(chan int)       // daemon restarts, by id (to reply to)
+	changech := make(chan []Change) // -w batches
+	restartch := make(chan bool)    // a script asking (on fd 3)
 
 	// signals (ex. kill, a closed terminal) quit like q: the script is in its
 	// own process group, so w/o this it would keep running after run exits
@@ -97,13 +99,13 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 	}
 
 	if len(watchExts) > 0 {
-		go watch(".", watchExts, pollInterval, reloadch)
+		go watch(".", watchExts, pollInterval, changech)
 	}
 
 	out := newOutputLog(64 << 10)
 
 	// start script
-	p, err := run(script, scriptArgs, out)
+	p, err := run(script, scriptArgs, out, restartch)
 	if err != nil {
 		log.Errorf("could not start script: %s%v%s\n", log.Red, err, log.Reset)
 		return
@@ -118,7 +120,7 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 		time.Sleep(500 * time.Millisecond)
 		mark := out.mark()
 		var err error
-		if p, err = run(script, scriptArgs, out); err != nil {
+		if p, err = run(script, scriptArgs, out, restartch); err != nil {
 			log.Errorf("could not start script: %s%v%s\n", log.Red, err, log.Reset)
 		}
 		return mark, err
@@ -150,8 +152,20 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 			}
 		case <-retry:
 			joinDaemon(true)
-		// r hit (or a watched file changed)
+		// r hit
 		case <-reloadch:
+			restart()
+		// the script asked to be restarted (on fd 3)
+		case <-restartch:
+			restart()
+		// watched files changed: the script handles them if it said hello on
+		// fd 3, otherwise it's restarted
+		case changes := <-changech:
+			if p != nil && p.events.send(changes) {
+				log.Infof("%s%s (sent to %s)%s\n", log.Yellow, describe(changes), script, log.Rtd)
+				continue
+			}
+			log.Infof("%s\n%s%s\n", log.Yellow, describe(changes), log.Rtd)
 			restart()
 		case id := <-resetch:
 			mark, err := restart()
@@ -162,13 +176,23 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 
 // proc is one run of the script
 type proc struct {
-	cmd  *exec.Cmd
-	done chan struct{} // closed when it exits, w/ err set
-	err  error
+	cmd    *exec.Cmd
+	events *events       // its fd 3 (nil if that couldn't be made)
+	done   chan struct{} // closed when it exits, w/ err set
+	err    error
 }
 
-func run(script string, args []string, out io.Writer) (*proc, error) {
+func run(script string, args []string, out io.Writer, restartch chan<- bool) (*proc, error) {
 	cmd := exec.Command(script, args...)
+
+	// fd 3 (see events.go), a script that doesn't use it won't notice
+	ev, scriptEnd, err := newEvents()
+	if err == nil {
+		cmd.ExtraFiles = []*os.File{scriptEnd}
+		cmd.Env = append(os.Environ(), fmt.Sprintf("RUN_EVENTS_FD=%d", EventsFD))
+	} else {
+		log.Debugf("no events fd: %v\n", err)
+	}
 
 	// Set process group for better process management
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -178,12 +202,21 @@ func run(script string, args []string, out io.Writer) (*proc, error) {
 	cmd.Stdout = io.MultiWriter(os.Stdout, out)
 	cmd.Stderr = io.MultiWriter(os.Stderr, out)
 
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	if scriptEnd != nil {
+		scriptEnd.Close() // (the script has it now)
+	}
+	if err != nil {
+		ev.close()
 		return nil, err
 	}
-	p := &proc{cmd: cmd, done: make(chan struct{})}
+	p := &proc{cmd: cmd, events: ev, done: make(chan struct{})}
+	if ev != nil {
+		go ev.read(restartch)
+	}
 	go func() {
 		p.err = cmd.Wait()
+		ev.close()
 		close(p.done)
 	}()
 	return p, nil

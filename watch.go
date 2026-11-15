@@ -1,13 +1,12 @@
 package run
 
 import (
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/taybart/log"
 )
 
 // Watching polls the tree instead of using file events (inotify, kqueue):
@@ -25,26 +24,68 @@ type fileStat struct {
 	size int64
 }
 
-// watch sends on reloadch when files under dir w/ one of exts change (are
-// added, edited or removed). exts are w/o the dot, "*" matches every file.
-func watch(dir string, exts []string, interval time.Duration, reloadch chan<- bool) {
-	prev := scan(dir, exts)
-	pending := ""
+// Change is a file that was added, modified or removed
+type Change struct {
+	Kind string // added, modified, removed
+	Path string // relative to the watched directory
+}
+
+// watch sends the changes to files under dir w/ one of exts (exts are w/o the
+// dot, "*" matches every file), a batch once they settle: what's different
+// from before the first change, so a burst of saves (or an editor's temp
+// file + rename) is one batch.
+func watch(dir string, exts []string, interval time.Duration, changech chan<- []Change) {
+	base := scan(dir, exts) // (as of the last batch)
+	prev, settling := base, false
 	for range time.Tick(interval) {
 		cur := scan(dir, exts)
-		if p, ok := changed(prev, cur); ok {
-			prev = cur
-			if pending == "" {
-				pending = p
-			}
+		if _, ok := changed(prev, cur); ok {
+			prev, settling = cur, true
 			continue // wait for it to settle
 		}
-		if pending != "" {
-			log.Infof("%s\n%s changed%s\n", log.Yellow, pending, log.Rtd)
-			pending = ""
-			reloadch <- true
+		if !settling {
+			continue
+		}
+		settling = false
+		changes := diff(dir, base, cur)
+		base = cur
+		if len(changes) > 0 {
+			changech <- changes
 		}
 	}
+}
+
+// diff is how b differs from a, sorted by path
+func diff(dir string, a, b map[string]fileStat) []Change {
+	changes := []Change{}
+	add := func(kind, p string) {
+		if rel, err := filepath.Rel(dir, p); err == nil {
+			p = rel
+		}
+		changes = append(changes, Change{Kind: kind, Path: p})
+	}
+	for p, s := range b {
+		if old, ok := a[p]; !ok {
+			add("added", p)
+		} else if old != s {
+			add("modified", p)
+		}
+	}
+	for p := range a {
+		if _, ok := b[p]; !ok {
+			add("removed", p)
+		}
+	}
+	slices.SortFunc(changes, func(x, y Change) int { return strings.Compare(x.Path, y.Path) })
+	return changes
+}
+
+// describe is a short log line for a batch
+func describe(changes []Change) string {
+	if len(changes) == 1 {
+		return changes[0].Path + " " + changes[0].Kind
+	}
+	return fmt.Sprintf("%d files changed", len(changes))
 }
 
 // scan stats the files under dir that match exts, skipping dot files and
