@@ -44,7 +44,7 @@ and restarted from elsewhere, ex. a script or an agent. Each `run` registers
 when it starts and unregisters when it exits (however it exits).
 
 ```sh
-$ run-daemon &; disown
+$ run-daemon install   # once: a service that starts at login (launchd/systemd), started now
 $ cd /home/user/site && run rest -s -d . -a :8005
 Running rest...
 Press 'r' to reload, 'q' to quit
@@ -74,6 +74,29 @@ printed since the restart (the last 4KB). There's one result per matching
 
 `404` means nothing matches. A `run` that doesn't confirm within 5s (ex. an
 older version) gets `"error": "sent the restart, but run didn't confirm it"`.
+
+#### the service
+
+`run-daemon install` installs it as a per-user service and starts it: a
+launchd agent on macOS (`~/Library/LaunchAgents/com.taybart.run-daemon.plist`,
+logs in `~/Library/Logs/run-daemon.log`), a systemd user unit on linux
+(`~/.config/systemd/user/run-daemon.service`, logs in
+`journalctl --user -u run-daemon`). It starts at login and restarts if it dies.
+No root needed. `run-daemon uninstall` stops and removes it.
+
+To update, install the new binary and run `install` again, which restarts the
+service w/ it:
+
+```sh
+go install ./cmd/run-daemon && run-daemon install
+```
+
+`run`s reconnect on their own (quietly, every 2s) when the daemon restarts, or
+when it starts after them. `c` reconnects right away. Only one `run-daemon`
+runs at a time: stop one started by hand (`run-daemon &`) before installing.
+
+On linux, a user service stops when you log out. To keep it running (ex. on a
+server): `loginctl enable-linger $USER`.
 
 There is an mcp endpoint at `http://localhost:19230/mcp` with the same
 `list_scripts` and `restart_script` (which returns the same report as text).

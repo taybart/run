@@ -23,6 +23,10 @@ const ResetSettle = time.Second
 // outputLimit is the most output a restart reports (the end of it)
 const outputLimit = 4 << 10
 
+// reconnectEvery is how often run tries to (re)join the daemon while it isn't
+// connected (ex. the daemon restarted after an update), quietly
+var reconnectEvery = 2 * time.Second
+
 // Do runs script, restarting it on r, a daemon restart, or (w/ watch, a list
 // of file extensions or "*") when files in the working directory change.
 func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) {
@@ -73,16 +77,23 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 		}
 	}()
 
-	// one connection to the daemon at a time, c replaces it
+	// one connection to the daemon at a time, c replaces it. W/o one, run
+	// retries every reconnectEvery (quietly, only c and the first try print).
 	var daemon *Bus
-	joinDaemon := func() {
+	var retry <-chan time.Time
+	lostch := make(chan *Bus) // (a connection's listen ended)
+	joinDaemon := func(quiet bool) {
 		if daemon != nil {
 			daemon.Close()
 		}
-		daemon = connect(quitch, resetch, script, scriptArgs)
+		daemon = connect(quitch, resetch, lostch, script, scriptArgs, quiet)
+		retry = nil
+		if daemon == nil {
+			retry = time.After(reconnectEvery)
+		}
 	}
 	if tryDaemon {
-		joinDaemon()
+		joinDaemon(false)
 	}
 
 	if len(watchExts) > 0 {
@@ -130,8 +141,15 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 		case <-reconnch:
 			if tryDaemon {
 				log.Infof("\n%sReconnecting...%s\n", log.Green, log.Rtd)
-				joinDaemon()
+				joinDaemon(false)
 			}
+		case bus := <-lostch:
+			if bus == daemon { // (not one c replaced)
+				daemon = nil
+				retry = time.After(reconnectEvery)
+			}
+		case <-retry:
+			joinDaemon(true)
 		// r hit (or a watched file changed)
 		case <-reloadch:
 			restart()
@@ -220,33 +238,42 @@ func kill(cmd *exec.Cmd) {
 }
 
 // connect joins run-daemon (nil if it isn't running) and listens to it in
-// the background, closing the bus leaves
-func connect(quitch chan bool, resetch chan int, script string, scriptArgs []string) *Bus {
+// the background, closing the bus leaves. When the connection ends, the bus
+// is sent on lostch. quiet doesn't print (for retries).
+func connect(quitch chan bool, resetch chan int, lostch chan<- *Bus, script string, scriptArgs []string, quiet bool) *Bus {
+	say := func(format string, a ...any) {
+		if !quiet {
+			fmt.Printf(format, a...)
+		}
+	}
 	workingDir, err := os.Getwd()
 	if err != nil {
-		fmt.Printf("%sError getting working directory: %s%s\n", log.Red, err, log.Rtd)
+		say("%sError getting working directory: %s%s\n", log.Red, err, log.Rtd)
 		return nil
 	}
 	bus, err := NewBus(nil)
 	if err != nil {
-		fmt.Printf("%s...daemon unavailable...%s\n", log.ItalicYellow, log.Rtd)
+		say("%s...daemon unavailable...%s\n", log.ItalicYellow, log.Rtd)
 		return nil
 	}
 	pl := Process{Dir: workingDir, Script: script, Args: scriptArgs}
 	if err := bus.Write(Message{Action: ActionJoin, Payload: pl}); err != nil {
-		fmt.Printf("%sError joining daemon: %s%s\n", log.Red, err, log.Rtd)
+		say("%sError joining daemon: %s%s\n", log.Red, err, log.Rtd)
 		bus.Close()
 		return nil
 	}
-	go listen(bus, quitch, resetch)
+	go func() {
+		listen(bus, quitch, resetch, quiet)
+		lostch <- bus
+	}()
 	return bus
 }
 
-func listen(bus *Bus, quitch chan bool, resetch chan int) {
+func listen(bus *Bus, quitch chan bool, resetch chan int, quiet bool) {
 	for {
 		msg, err := bus.Read()
 		if err != nil {
-			if err != io.EOF && !errors.Is(err, net.ErrClosed) {
+			if !quiet && err != io.EOF && !errors.Is(err, net.ErrClosed) {
 				fmt.Printf("%sError: %s%s\n", log.Red, err, log.Rtd)
 			}
 			break
@@ -254,7 +281,9 @@ func listen(bus *Bus, quitch chan bool, resetch chan int) {
 
 		switch msg.Action {
 		case ActionJoinAck:
-			fmt.Printf("%sRegistered with daemon%s\n", log.ItalicGreen, log.Rtd)
+			if !quiet {
+				fmt.Printf("%sRegistered with daemon%s\n", log.ItalicGreen, log.Rtd)
+			}
 		case ActionReset:
 			resetch <- msg.ID
 		case ActionLeave:
