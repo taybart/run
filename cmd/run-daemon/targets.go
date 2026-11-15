@@ -20,16 +20,18 @@ type Target struct {
 	args   []string
 	bus    *run.Bus
 
-	mu      sync.Mutex
-	pending map[int]chan run.ResetResult // restarts waiting on run's reply
-	gone    chan struct{}                // closed when it leaves
+	mu          sync.Mutex
+	pending     map[int]chan run.ResetResult // restarts waiting on run's reply
+	logsPending map[int]chan run.LogsResult  // log requests waiting on run's reply
+	gone        chan struct{}                // closed when it leaves
 }
 
 func newTarget(p run.Process, bus *run.Bus) *Target {
 	return &Target{
 		key: makeKey(p), script: p.Script, args: p.Args, bus: bus,
-		pending: map[int]chan run.ResetResult{},
-		gone:    make(chan struct{}),
+		pending:     map[int]chan run.ResetResult{},
+		logsPending: map[int]chan run.LogsResult{},
+		gone:        make(chan struct{}),
 	}
 }
 
@@ -37,12 +39,12 @@ func (t *Target) send(msg run.Message) error {
 	return t.bus.Write(msg)
 }
 
-// resetIDs are unique across targets (0 means none, to older runs)
-var resetIDs atomic.Int64
+// requestIDs are unique across targets (0 means none, to older runs)
+var requestIDs atomic.Int64
 
 // reset restarts the instance and waits for its reply (how the restart went)
 func (t *Target) reset(timeout time.Duration) run.ResetResult {
-	id := int(resetIDs.Add(1))
+	id := int(requestIDs.Add(1))
 	ch := make(chan run.ResetResult, 1)
 	t.mu.Lock()
 	t.pending[id] = ch
@@ -73,6 +75,42 @@ func (t *Target) replied(id int, res run.ResetResult) {
 	t.mu.Unlock()
 	if ch != nil {
 		ch <- res // (buffered, one reply per id)
+	}
+}
+
+// logs asks the instance for the tail of its output; run replies right away
+func (t *Target) logs(timeout time.Duration) run.LogsResult {
+	id := int(requestIDs.Add(1))
+	ch := make(chan run.LogsResult, 1)
+	t.mu.Lock()
+	t.logsPending[id] = ch
+	t.mu.Unlock()
+	defer func() {
+		t.mu.Lock()
+		delete(t.logsPending, id)
+		t.mu.Unlock()
+	}()
+
+	if err := t.send(run.Message{ID: id, Action: run.ActionLogs}); err != nil {
+		return run.LogsResult{Error: "could not reach run: " + err.Error()}
+	}
+	select {
+	case res := <-ch:
+		return res
+	case <-t.gone:
+		return run.LogsResult{Error: "run exited"}
+	case <-time.After(timeout):
+		return run.LogsResult{Error: "run didn't reply (an older run?)"}
+	}
+}
+
+// repliedLogs delivers run's reply to a logs request
+func (t *Target) repliedLogs(id int, res run.LogsResult) {
+	t.mu.Lock()
+	ch := t.logsPending[id]
+	t.mu.Unlock()
+	if ch != nil {
+		ch <- res
 	}
 }
 
@@ -135,6 +173,10 @@ var errNotFound = errors.New("no matching script found")
 // run.ResetSettle after restarting (plus the time it takes to stop the old one)
 var resetTimeout = run.ResetSettle + 4*time.Second
 
+// logsTimeout is how long a logs request waits for run's reply, which it
+// sends right away
+var logsTimeout = 5 * time.Second
+
 // restart restarts every instance of p's command in p.Dir, and returns how
 // each went
 func (ts *targets) restart(p run.Process) ([]run.ResetResult, error) {
@@ -157,6 +199,33 @@ func (ts *targets) restart(p run.Process) ([]run.ResetResult, error) {
 		go func() {
 			defer wg.Done()
 			results[i] = t.reset(resetTimeout)
+		}()
+	}
+	wg.Wait()
+	return results, nil
+}
+
+// logs returns the tail of what each instance of p's command in p.Dir printed
+func (ts *targets) logs(p run.Process) ([]run.LogsResult, error) {
+	key := makeKey(p)
+	ts.mu.Lock()
+	matches := []*Target{}
+	for t := range ts.byDir[p.Dir] {
+		if t.key == key {
+			matches = append(matches, t)
+		}
+	}
+	ts.mu.Unlock()
+	if len(matches) == 0 {
+		return nil, errNotFound
+	}
+	results := make([]run.LogsResult, len(matches))
+	var wg sync.WaitGroup
+	for i, t := range matches {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = t.logs(logsTimeout)
 		}()
 	}
 	wg.Wait()

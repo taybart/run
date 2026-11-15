@@ -33,6 +33,14 @@ func (o *outputLog) mark() int64 {
 	return o.total
 }
 
+// tail returns everything in the buffer (the last max bytes written), and
+// whether more was written than the buffer keeps
+func (o *outputLog) tail() (string, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return string(o.buf), o.total > int64(len(o.buf))
+}
+
 // since returns what was written after mark, at most limit bytes (the end),
 // and whether it was cut short
 func (o *outputLog) since(mark int64, limit int) (string, bool) {

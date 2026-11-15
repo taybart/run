@@ -22,6 +22,7 @@ import (
 func init() {
 	gob.Register(Process{})
 	gob.Register(ResetResult{})
+	gob.Register(LogsResult{})
 }
 
 const (
@@ -37,6 +38,10 @@ const (
 	ActionLeave
 	// ActionResetResult is run's reply to a reset (w/ the reset's ID)
 	ActionResetResult
+	// ActionLogs asks run for the tail of the script's output, and
+	// ActionLogsResult is its reply (w/ the request's ID)
+	ActionLogs
+	ActionLogsResult
 )
 
 type Message struct {
@@ -54,6 +59,14 @@ type ResetResult struct {
 	Error     string `json:"error,omitempty"`
 	Output    string `json:"output"`
 	Truncated bool   `json:"truncated,omitempty"`
+}
+
+// LogsResult is the tail of what the script printed (stdout and stderr), the
+// reply to a logs request
+type LogsResult struct {
+	Output    string `json:"output"`
+	Truncated bool   `json:"truncated,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 type Process struct {
@@ -74,6 +87,10 @@ func (a Action) String() string {
 		return "leave"
 	case ActionResetResult:
 		return "reset_result"
+	case ActionLogs:
+		return "logs"
+	case ActionLogsResult:
+		return "logs_result"
 	default:
 		return "unknown"
 	}

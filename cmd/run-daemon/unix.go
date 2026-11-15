@@ -77,6 +77,11 @@ func (s *Server) handle(conn net.Conn) {
 			if me != nil && ok {
 				me.replied(msg.ID, res)
 			}
+		case run.ActionLogsResult:
+			res, ok := msg.Payload.(run.LogsResult)
+			if me != nil && ok {
+				me.repliedLogs(msg.ID, res)
+			}
 		default:
 			fmt.Println("unknown or out of order action:", msg.Action)
 		}

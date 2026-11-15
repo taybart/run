@@ -26,6 +26,23 @@ func TestOutputLog(t *testing.T) {
 	}
 }
 
+func TestOutputLogTail(t *testing.T) {
+	o := newOutputLog(8)
+	o.Write([]byte("0123456789")) // drops "01", keeps "23456789"
+	if got, cut := o.tail(); got != "23456789" || !cut {
+		t.Errorf("tail: %q %v", got, cut)
+	}
+	o.Write([]byte("x")) // still the last 8: "3456789x"
+	if got, cut := o.tail(); got != "3456789x" || !cut {
+		t.Errorf("tail after more: %q %v", got, cut)
+	}
+	small := newOutputLog(8)
+	small.Write([]byte("hi"))
+	if got, cut := small.tail(); got != "hi" || cut {
+		t.Errorf("tail under max: %q %v", got, cut)
+	}
+}
+
 // report sends how a restart went, w/ the output since it
 func TestReport(t *testing.T) {
 	dir := t.TempDir()

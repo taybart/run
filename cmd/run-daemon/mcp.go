@@ -69,6 +69,19 @@ var mcpTools = []mcpTool{
 			"required": []string{"dir", "script"},
 		},
 	},
+	{
+		Name:        "get_logs",
+		Description: "Get the tail of a script's output (stdout and stderr) registered with the run daemon, without restarting it.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"dir":    map[string]any{"type": "string"},
+				"script": map[string]any{"type": "string"},
+				"args":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			},
+			"required": []string{"dir", "script"},
+		},
+	},
 }
 
 func (s *Server) handleMCP() http.HandlerFunc {
@@ -137,6 +150,8 @@ func (s *Server) mcpToolsCall(params json.RawMessage) (*mcpCallResult, *rpcError
 		return s.mcpListScripts(p.Arguments)
 	case "restart_script":
 		return s.mcpRestartScript(p.Arguments)
+	case "get_logs":
+		return s.mcpGetLogs(p.Arguments)
 	default:
 		return nil, &rpcError{Code: -32602, Message: "unknown tool: " + p.Name}
 	}
@@ -204,5 +219,45 @@ func (s *Server) mcpRestartScript(args json.RawMessage) (*mcpCallResult, *rpcErr
 	return &mcpCallResult{
 		Content: []mcpContent{{Type: "text", Text: describeRestart(req.Script, results)}},
 		IsError: !allOK(results),
+	}, nil
+}
+
+// describeLogs says what each instance printed recently (so an agent can see
+// it came up, or what it's been doing, w/o restarting it)
+func describeLogs(script string, results []run.LogsResult) string {
+	var b strings.Builder
+	for i, r := range results {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		if r.Error != "" {
+			fmt.Fprintf(&b, "couldn't get %s's logs: %s", script, r.Error)
+			continue
+		}
+		if r.Output == "" {
+			fmt.Fprintf(&b, "%s hasn't printed anything", script)
+			continue
+		}
+		cut := ""
+		if r.Truncated {
+			cut = " (the end of it)"
+		}
+		fmt.Fprintf(&b, "%s's recent output%s:\n%s", script, cut, r.Output)
+	}
+	return b.String()
+}
+
+func (s *Server) mcpGetLogs(args json.RawMessage) (*mcpCallResult, *rpcError) {
+	var req run.Process
+	if err := json.Unmarshal(args, &req); err != nil || req.Dir == "" || req.Script == "" {
+		return nil, &rpcError{Code: -32602, Message: "dir and script are required"}
+	}
+
+	results, err := s.targets.logs(req)
+	if err != nil {
+		return &mcpCallResult{Content: []mcpContent{{Type: "text", Text: err.Error()}}, IsError: true}, nil
+	}
+	return &mcpCallResult{
+		Content: []mcpContent{{Type: "text", Text: describeLogs(req.Script, results)}},
 	}, nil
 }

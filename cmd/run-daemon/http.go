@@ -67,6 +67,30 @@ func (s *Server) handleRestart() http.HandlerFunc {
 	}
 }
 
+func (s *Server) handleLogs() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		req := run.Process{
+			Dir:    q.Get("dir"),
+			Script: q.Get("script"),
+			Args:   q["args"],
+		}
+		if req.Dir == "" || req.Script == "" {
+			http.Error(w, "missing dir or script", http.StatusBadRequest)
+			return
+		}
+		results, err := s.targets.logs(req)
+		if errors.Is(err, errNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(results); err != nil {
+			fmt.Println(err)
+		}
+	}
+}
+
 func allOK(results []run.ResetResult) bool {
 	for _, r := range results {
 		if !r.OK {
@@ -80,11 +104,13 @@ func (s *Server) listenHTTP() error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /list", s.handleList())
+	mux.HandleFunc("GET /logs", s.handleLogs())
 	mux.HandleFunc("POST /restart", s.handleRestart())
 	mux.HandleFunc("POST /mcp", s.handleMCP())
 
 	srv := &http.Server{
-		Addr:              ":19230",
+		// only listen on localhost since this exposes running logs
+		Addr:              "localhost:19230",
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

@@ -11,27 +11,38 @@ import (
 )
 
 // client is a fake run instance connected to the daemon over a pipe, it
-// replies to resets w/ result (unless nil)
+// replies to resets w/ result (unless nil) and to logs w/ logs (unless nil)
 type client struct {
 	conn   net.Conn
 	bus    *run.Bus
 	msgs   chan run.Message
 	result *run.ResetResult
+	logs   *run.LogsResult
 }
 
 var running = &run.ResetResult{OK: true, Running: true, Output: "listening to :8080...\n"}
 
 func join(t *testing.T, s *Server, p run.Process) *client {
 	t.Helper()
-	return joinWith(t, s, p, running)
+	return joinFull(t, s, p, running, nil)
 }
 
 func joinWith(t *testing.T, s *Server, p run.Process, result *run.ResetResult) *client {
 	t.Helper()
+	return joinFull(t, s, p, result, nil)
+}
+
+func joinLogs(t *testing.T, s *Server, p run.Process, logs *run.LogsResult) *client {
+	t.Helper()
+	return joinFull(t, s, p, running, logs)
+}
+
+func joinFull(t *testing.T, s *Server, p run.Process, result *run.ResetResult, logs *run.LogsResult) *client {
+	t.Helper()
 	server, conn := net.Pipe()
 	go s.handle(server)
 	bus, _ := run.NewBus(conn)
-	c := &client{conn: conn, bus: bus, msgs: make(chan run.Message, 10), result: result}
+	c := &client{conn: conn, bus: bus, msgs: make(chan run.Message, 10), result: result, logs: logs}
 	go func() {
 		for {
 			msg, err := bus.Read()
@@ -41,6 +52,9 @@ func joinWith(t *testing.T, s *Server, p run.Process, result *run.ResetResult) *
 			}
 			if msg.Action == run.ActionReset && c.result != nil {
 				go bus.Write(run.Message{ID: msg.ID, Action: run.ActionResetResult, Payload: *c.result})
+			}
+			if msg.Action == run.ActionLogs && c.logs != nil {
+				go bus.Write(run.Message{ID: msg.ID, Action: run.ActionLogsResult, Payload: *c.logs})
 			}
 			select {
 			case c.msgs <- msg:
@@ -205,4 +219,49 @@ func TestRestartResults(t *testing.T) {
 		!strings.Contains(text, "failed: exited w/ exit status 1\noutput since the restart:\nparse error") {
 		t.Errorf("describe:\n%s", text)
 	}
+}
+
+func TestLogs(t *testing.T) {
+	s := newServer()
+	p := run.Process{Dir: "/site", Script: "rest", Args: []string{"-s"}}
+	logged := &run.LogsResult{Output: "listening to :8080...\nserving...\n"}
+	c := joinLogs(t, s, p, logged)
+
+	results, err := s.targets.logs(p)
+	if err != nil || len(results) != 1 || results[0].Output != logged.Output {
+		t.Fatalf("logs: %+v %v", results, err)
+	}
+	// the instance got the request (before its reply)
+	if msg := c.next(t); msg.Action != run.ActionLogs {
+		t.Fatalf("expected logs, got %v", msg.Action)
+	}
+
+	// dir/script/args have to match, like a restart
+	if _, err := s.targets.logs(run.Process{Dir: "/site", Script: "rest"}); err != errNotFound {
+		t.Errorf("logs w/ different args: %v", err)
+	}
+	if _, err := s.targets.logs(run.Process{Dir: "/elsewhere", Script: "rest", Args: []string{"-s"}}); err != errNotFound {
+		t.Errorf("logs w/ different dir: %v", err)
+	}
+
+	if text := describeLogs("rest", []run.LogsResult{*logged}); !strings.Contains(text, "recent output") ||
+		!strings.Contains(text, logged.Output) {
+		t.Errorf("describe logs:\n%s", text)
+	}
+	c.conn.Close()
+}
+
+func TestLogsNoReply(t *testing.T) {
+	old := logsTimeout
+	logsTimeout = 100 * time.Millisecond
+	defer func() { logsTimeout = old }()
+
+	s := newServer()
+	p := run.Process{Dir: "/noreply", Script: "rest"}
+	c := joinWith(t, s, p, running) // logs is nil, so it never replies
+	results, err := s.targets.logs(p)
+	if err != nil || len(results) != 1 || !strings.Contains(results[0].Error, "didn't reply") {
+		t.Errorf("no reply: %+v %v", results, err)
+	}
+	c.conn.Close()
 }

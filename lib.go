@@ -23,6 +23,10 @@ const ResetSettle = time.Second
 // outputLimit is the most output a restart reports (the end of it)
 const outputLimit = 4 << 10
 
+// outputBuffer is how much of the script's output run keeps, so the daemon's
+// logs endpoint can report the tail of it
+const outputBuffer = 64 << 10
+
 // reconnectEvery is how often run tries to (re)join the daemon while it isn't
 // connected (ex. the daemon restarted after an update), quietly
 var reconnectEvery = 2 * time.Second
@@ -79,6 +83,8 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 		}
 	}()
 
+	out := newOutputLog(outputBuffer)
+
 	// one connection to the daemon at a time, c replaces it. W/o one, run
 	// retries every reconnectEvery (quietly, only c and the first try print).
 	var daemon *Bus
@@ -88,7 +94,7 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 		if daemon != nil {
 			daemon.Close()
 		}
-		daemon = connect(quitch, resetch, lostch, script, scriptArgs, quiet)
+		daemon = connect(quitch, resetch, lostch, script, scriptArgs, out, quiet)
 		retry = nil
 		if daemon == nil {
 			retry = time.After(reconnectEvery)
@@ -101,8 +107,6 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 	if len(watchExts) > 0 {
 		go watch(".", watchExts, pollInterval, changech)
 	}
-
-	out := newOutputLog(64 << 10)
 
 	// start script
 	p, err := run(script, scriptArgs, out, restartch)
@@ -273,7 +277,7 @@ func kill(cmd *exec.Cmd) {
 // connect joins run-daemon (nil if it isn't running) and listens to it in
 // the background, closing the bus leaves. When the connection ends, the bus
 // is sent on lostch. quiet doesn't print (for retries).
-func connect(quitch chan bool, resetch chan int, lostch chan<- *Bus, script string, scriptArgs []string, quiet bool) *Bus {
+func connect(quitch chan bool, resetch chan int, lostch chan<- *Bus, script string, scriptArgs []string, out *outputLog, quiet bool) *Bus {
 	say := func(format string, a ...any) {
 		if !quiet {
 			fmt.Printf(format, a...)
@@ -296,13 +300,13 @@ func connect(quitch chan bool, resetch chan int, lostch chan<- *Bus, script stri
 		return nil
 	}
 	go func() {
-		listen(bus, quitch, resetch, quiet)
+		listen(bus, quitch, resetch, out, quiet)
 		lostch <- bus
 	}()
 	return bus
 }
 
-func listen(bus *Bus, quitch chan bool, resetch chan int, quiet bool) {
+func listen(bus *Bus, quitch chan bool, resetch chan int, out *outputLog, quiet bool) {
 	for {
 		msg, err := bus.Read()
 		if err != nil {
@@ -319,6 +323,10 @@ func listen(bus *Bus, quitch chan bool, resetch chan int, quiet bool) {
 			}
 		case ActionReset:
 			resetch <- msg.ID
+		case ActionLogs:
+			res := LogsResult{}
+			res.Output, res.Truncated = out.tail()
+			bus.Write(Message{ID: msg.ID, Action: ActionLogsResult, Payload: res})
 		case ActionLeave:
 			quitch <- true
 		}

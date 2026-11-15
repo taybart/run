@@ -101,6 +101,20 @@ printed since the restart (the last 4KB). There's one result per matching
 `404` means nothing matches. A `run` that doesn't confirm within 5s (ex. an
 older version) gets `"error": "sent the restart, but run didn't confirm it"`.
 
+#### logs
+
+`run` keeps the last 64KB of the script's output, and the daemon can return
+the tail of it without restarting anything. Like a restart, `dir`, `script`
+and `args` have to match (`args` repeat in the query):
+
+```sh
+$ curl 'http://localhost:19230/logs?dir=/home/user/site&script=rest&args=-s&args=-d&args=.&args=-a&args=:8005'
+[{"output":"2025-03-17 13:03:10 [INFO] listening to :8005...\n"}]
+```
+
+There's one result per matching `run`, each w/ the tail of what it printed
+(`truncated` says there was more than it keeps). `404` means nothing matches.
+
 #### the service
 
 `run-daemon install` installs it as a per-user service and starts it: a
@@ -125,9 +139,9 @@ On linux, a user service stops when you log out. To keep it running (ex. on a
 server): `loginctl enable-linger $USER`.
 
 There is an mcp endpoint at `http://localhost:19230/mcp` with the same
-`list_scripts` and `restart_script` (which returns the same report as text).
+`list_scripts` and `restart_script` (which returns the same report as text),
+plus `get_logs` (the tail of a script's output, like `/logs`).
 
 # TODO
 
-- [ ] grab logs from running process (maybe keep last 100 lines?), run keeps
-      the last 64KB for restart reports, an endpoint could serve it
+See [LEFTOVERS.md](LEFTOVERS.md).
