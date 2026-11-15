@@ -74,7 +74,7 @@ func TestChanged(t *testing.T) {
 	}
 }
 
-// a burst of saves is one batch, once they settle, w/ what's different from
+// a burst of saves is one batch, once they settle, with what's different from
 // before it
 func TestWatch(t *testing.T) {
 	dir := t.TempDir()

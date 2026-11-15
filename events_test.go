@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// a script that says hello on fd 3 gets the changes, w/ a done per batch
+// a script that says hello on fd 3 gets the changes, with a done per batch
 func TestEventsHello(t *testing.T) {
 	dir := t.TempDir()
 	got := filepath.Join(dir, "got")

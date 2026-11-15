@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -50,7 +51,7 @@ func (s *Server) handleRestart() http.HandlerFunc {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		fmt.Printf("restarting: dir(%s) $ %s %s\n", req.Dir, req.Script, strings.Join(req.Args, " "))
+		fmt.Printf("restarting: dir(%s) $ %s\n", req.Dir, req.Script)
 		results, err := s.targets.restart(req)
 		if errors.Is(err, errNotFound) {
 			w.WriteHeader(http.StatusNotFound)
@@ -100,6 +101,32 @@ func allOK(results []run.ResetResult) bool {
 	return true
 }
 
+// localOnly rejects requests whose Host isn't a loopback address (a DNS
+// rebinding trick makes the browser think a remote host is the daemon, then it
+// can read the logs) and cross-site requests from a browser (CSRF, ex. a
+// restart triggered by a page you're viewing).
+func localOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopback(r.Host) || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isLoopback reports whether host is a loopback name or address (any port)
+func isLoopback(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
+}
+
 func (s *Server) listenHTTP() error {
 	mux := http.NewServeMux()
 
@@ -109,9 +136,10 @@ func (s *Server) listenHTTP() error {
 	mux.HandleFunc("POST /mcp", s.handleMCP())
 
 	srv := &http.Server{
-		// only listen on localhost since this exposes running logs
-		Addr:              "localhost:19230",
-		Handler:           mux,
+		// loopback only, since this serves running logs; localOnly also rejects
+		// non-loopback Host headers and cross-site browser requests
+		Addr:              "127.0.0.1:19230",
+		Handler:           localOnly(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

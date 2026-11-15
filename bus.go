@@ -2,8 +2,12 @@ package run
 
 import (
 	"encoding/gob"
+	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
+	"syscall"
 )
 
 /***
@@ -25,9 +29,38 @@ func init() {
 	gob.Register(LogsResult{})
 }
 
-const (
-	SocketPath = "/tmp/run-daemon.sock"
-)
+// SocketDir is the per-user directory the daemon's socket lives in, so one
+// user's daemon can't be reached (or its path squatted) by another.
+func SocketDir() string {
+	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
+		return filepath.Join(d, "run-daemon")
+	}
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+	return filepath.Join(dir, "run-daemon")
+}
+
+// SocketPath is the full path to the daemon's unix socket
+func SocketPath() string {
+	return filepath.Join(SocketDir(), "run-daemon.sock")
+}
+
+// OwnedByMe reports whether path is a socket owned by the current user (and
+// not a symlink to something else). run checks it before dialing, so it won't
+// talk to a socket another user left there.
+func OwnedByMe(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSocket == 0 {
+		return false
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
+	}
+	return int(st.Uid) == os.Getuid()
+}
 
 type Action int
 
@@ -36,10 +69,10 @@ const (
 	ActionJoinAck
 	ActionReset
 	ActionLeave
-	// ActionResetResult is run's reply to a reset (w/ the reset's ID)
+	// ActionResetResult is run's reply to a reset (with the reset's ID)
 	ActionResetResult
 	// ActionLogs asks run for the tail of the script's output, and
-	// ActionLogsResult is its reply (w/ the request's ID)
+	// ActionLogsResult is its reply (with the request's ID)
 	ActionLogs
 	ActionLogsResult
 )
@@ -51,7 +84,7 @@ type Message struct {
 }
 
 // ResetResult is how a restart went: the script is still running after
-// ResetSettle, or it exited (OK if w/ 0), and what it printed since the restart
+// ResetSettle, or it exited (OK if with 0), and what it printed since the restart
 type ResetResult struct {
 	OK        bool   `json:"ok"`
 	Running   bool   `json:"running"`
@@ -108,7 +141,10 @@ type Bus struct {
 func NewBus(conn net.Conn) (*Bus, error) {
 	if conn == nil {
 		var err error
-		conn, err = net.Dial("unix", SocketPath)
+		if !OwnedByMe(SocketPath()) {
+			return nil, errors.New("daemon socket is not owned by the current user")
+		}
+		conn, err = net.Dial("unix", SocketPath())
 		if err != nil {
 			return nil, err
 		}

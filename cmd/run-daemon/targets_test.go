@@ -11,7 +11,7 @@ import (
 )
 
 // client is a fake run instance connected to the daemon over a pipe, it
-// replies to resets w/ result (unless nil) and to logs w/ logs (unless nil)
+// replies to resets withresult (unless nil) and to logs withlogs (unless nil)
 type client struct {
 	conn   net.Conn
 	bus    *run.Bus
@@ -82,7 +82,7 @@ func (c *client) next(t *testing.T) run.Message {
 	}
 }
 
-// eventually waits for the daemon to catch up w/ a disconnect
+// eventually waits for the daemon to catch up witha disconnect
 func eventually(t *testing.T, cond func() bool) {
 	t.Helper()
 	for range 100 {
@@ -141,7 +141,7 @@ func TestSameCommandTwice(t *testing.T) {
 		t.Error("empty directory kept")
 	}
 	if _, err := s.targets.restart(p); err != errNotFound {
-		t.Errorf("restart w/ nothing running: %v", err)
+		t.Errorf("restart withnothing running: %v", err)
 	}
 	b.conn.Close()
 }
@@ -157,7 +157,7 @@ func TestRejoinReplaces(t *testing.T) {
 	c.conn.Close()
 }
 
-// many instances joining, restarting and leaving at once (run w/ -race)
+// many instances joining, restarting and leaving at once (run with-race)
 func TestConcurrent(t *testing.T) {
 	s := newServer()
 	p := run.Process{Dir: "/site", Script: "rest"}
@@ -182,7 +182,7 @@ func TestRestartResults(t *testing.T) {
 	defer func() { resetTimeout = old }()
 
 	s := newServer()
-	crashed := &run.ResetResult{ExitCode: 1, Error: "exited w/ exit status 1", Output: "parse error\n"}
+	crashed := &run.ResetResult{ExitCode: 1, Error: "exited withexit status 1", Output: "parse error\n"}
 	cases := []struct {
 		name   string
 		result *run.ResetResult
@@ -216,7 +216,7 @@ func TestRestartResults(t *testing.T) {
 	}
 
 	if text := describeRestart("rest", []run.ResetResult{*running, *crashed}); !strings.Contains(text, "it's running") ||
-		!strings.Contains(text, "failed: exited w/ exit status 1\noutput since the restart:\nparse error") {
+		!strings.Contains(text, "failed: exited withexit status 1\noutput since the restart:\nparse error") {
 		t.Errorf("describe:\n%s", text)
 	}
 }
@@ -238,10 +238,10 @@ func TestLogs(t *testing.T) {
 
 	// dir/script/args have to match, like a restart
 	if _, err := s.targets.logs(run.Process{Dir: "/site", Script: "rest"}); err != errNotFound {
-		t.Errorf("logs w/ different args: %v", err)
+		t.Errorf("logs withdifferent args: %v", err)
 	}
 	if _, err := s.targets.logs(run.Process{Dir: "/elsewhere", Script: "rest", Args: []string{"-s"}}); err != errNotFound {
-		t.Errorf("logs w/ different dir: %v", err)
+		t.Errorf("logs withdifferent dir: %v", err)
 	}
 
 	if text := describeLogs("rest", []run.LogsResult{*logged}); !strings.Contains(text, "recent output") ||

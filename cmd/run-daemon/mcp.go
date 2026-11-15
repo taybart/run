@@ -177,7 +177,7 @@ func (s *Server) mcpListScripts(args json.RawMessage) (*mcpCallResult, *rpcError
 	return &mcpCallResult{Content: []mcpContent{{Type: "text", Text: string(text)}}}, nil
 }
 
-// describeRestart says how each instance's restart went, w/ its output (so
+// describeRestart says how each instance's restart went, with its output (so
 // the caller can see it came up, or why it didn't)
 func describeRestart(script string, results []run.ResetResult) string {
 	var b strings.Builder
@@ -189,7 +189,7 @@ func describeRestart(script string, results []run.ResetResult) string {
 		case r.Running:
 			fmt.Fprintf(&b, "restarted %s, it's running", script)
 		case r.OK:
-			fmt.Fprintf(&b, "restarted %s, it ran and exited w/ 0", script)
+			fmt.Fprintf(&b, "restarted %s, it ran and exited with 0", script)
 		default:
 			fmt.Fprintf(&b, "restarting %s failed: %s", script, r.Error)
 		}
@@ -223,7 +223,7 @@ func (s *Server) mcpRestartScript(args json.RawMessage) (*mcpCallResult, *rpcErr
 }
 
 // describeLogs says what each instance printed recently (so an agent can see
-// it came up, or what it's been doing, w/o restarting it)
+// it came up, or what it's been doing, without restarting it)
 func describeLogs(script string, results []run.LogsResult) string {
 	var b strings.Builder
 	for i, r := range results {

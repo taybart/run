@@ -11,7 +11,7 @@ import (
 )
 
 // Scripts can handle file changes themselves instead of being restarted.
-// run starts every script w/ a socket on fd 3 (and RUN_EVENTS_FD=3), which
+// run starts every script with a socket on fd 3 (and RUN_EVENTS_FD=3), which
 // a script that doesn't know about it never touches. One that does writes
 // lines to it:
 //

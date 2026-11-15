@@ -31,7 +31,7 @@ const outputBuffer = 64 << 10
 // connected (ex. the daemon restarted after an update), quietly
 var reconnectEvery = 2 * time.Second
 
-// Do runs script, restarting it on r, a daemon restart, or (w/ watch, a list
+// Do runs script, restarting it on r, a daemon restart, or (with watch, a list
 // of file extensions or "*") when files in the working directory change.
 func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) {
 	// communication channels
@@ -43,7 +43,7 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 	restartch := make(chan bool)    // a script asking (on fd 3)
 
 	// signals (ex. kill, a closed terminal) quit like q: the script is in its
-	// own process group, so w/o this it would keep running after run exits
+	// own process group, so without this it would keep running after run exits
 	sigch := make(chan os.Signal, 1)
 	signal.Notify(sigch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
@@ -85,7 +85,7 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 
 	out := newOutputLog(outputBuffer)
 
-	// one connection to the daemon at a time, c replaces it. W/o one, run
+	// one connection to the daemon at a time, c replaces it. without one, run
 	// retries every reconnectEvery (quietly, only c and the first try print).
 	var daemon *Bus
 	var retry <-chan time.Time
@@ -182,7 +182,7 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 type proc struct {
 	cmd    *exec.Cmd
 	events *events       // its fd 3 (nil if that couldn't be made)
-	done   chan struct{} // closed when it exits, w/ err set
+	done   chan struct{} // closed when it exits, with err set
 	err    error
 }
 
@@ -241,7 +241,7 @@ func report(daemon *Bus, id int, p *proc, startErr error, out *outputLog, mark i
 			res.ExitCode = p.cmd.ProcessState.ExitCode()
 			res.OK = p.err == nil
 			if !res.OK {
-				res.Error = fmt.Sprintf("exited w/ %v", p.err)
+				res.Error = fmt.Sprintf("exited with%v", p.err)
 			}
 		case <-time.After(ResetSettle):
 			res.OK, res.Running = true, true

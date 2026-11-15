@@ -30,7 +30,7 @@ type Change struct {
 	Path string // relative to the watched directory
 }
 
-// watch sends the changes to files under dir w/ one of exts (exts are w/o the
+// watch sends the changes to files under dir with one of exts (exts are without the
 // dot, "*" matches every file), a batch once they settle: what's different
 // from before the first change, so a burst of saves (or an editor's temp
 // file + rename) is one batch.

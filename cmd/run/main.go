@@ -12,7 +12,7 @@ import (
 
 func usage() {
 	fmt.Printf("%sUsage: run [-w exts] [--] <script-to-run> [args...]%s\n", log.Red, log.Rtd)
-	fmt.Println("  -w exts   restart when files w/ these extensions change (ex. -w mn,rest,css, or -w '*' for any file)")
+	fmt.Println("  -w exts   restart when files with these extensions change (ex. -w mn,rest,css, or -w '*' for any file)")
 }
 
 func main() {

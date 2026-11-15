@@ -82,9 +82,13 @@ func makeKey(pl run.Process) string {
 	return strings.Join(append([]string{pl.Script}, pl.Args...), "\x00")
 }
 
-// daemonRunning is if a run-daemon answers on the socket
+// daemonRunning is if a run-daemon answers on the socket (and it's our socket,
+// not one another user left there)
 func daemonRunning() bool {
-	conn, err := net.DialTimeout("unix", run.SocketPath, time.Second)
+	if !run.OwnedByMe(run.SocketPath()) {
+		return false
+	}
+	conn, err := net.DialTimeout("unix", run.SocketPath(), time.Second)
 	if err != nil {
 		return false
 	}
@@ -98,7 +102,7 @@ func sysInterrupt() {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
-		os.Remove(run.SocketPath)
+		os.Remove(run.SocketPath())
 		os.Exit(1)
 	}()
 }

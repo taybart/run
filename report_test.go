@@ -43,7 +43,7 @@ func TestOutputLogTail(t *testing.T) {
 	}
 }
 
-// report sends how a restart went, w/ the output since it
+// report sends how a restart went, with the output since it
 func TestReport(t *testing.T) {
 	dir := t.TempDir()
 	script := func(name, body string) string {

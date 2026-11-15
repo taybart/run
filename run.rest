@@ -35,49 +35,47 @@ cli {
   }
   fn   = <<LUA
     if cli.mcp then
-      rest.label("mcp."..cli["mcp"])
-      return
+    	rest.label('mcp.' .. cli['mcp'])
+    	return
     end
-    if cli.dir then
-      rest.exports.dir = cli.dir
-    end
+    if cli.dir then rest.exports.dir = cli.dir end
     if cli.restart then
-      rest.exports.script = cli.restart
-      if cli.args then
-        local arr = {}
-        for a in cli.args:gmatch("[^,]+") do
-          table.insert(arr, a)
-        end
-        rest.exports.args = arr
-      end
-      rest.label("restart")
-      return
+    	rest.exports.script = cli.restart
+    	if cli.args then
+    		local arr = {}
+    		for a in cli.args:gmatch('[^,]+') do
+    			table.insert(arr, a)
+    		end
+    		rest.exports.args = arr
+    	end
+    	rest.label('restart')
+    	return
     end
     if cli.list then
-      rest.label("list")
-      return
+    	rest.label('list')
+    	return
     end
     rest.exports.repl = true
     rest.exports.original = {
-      dir = cli.dir,
+    	dir = cli.dir,
     }
-    rest.label("list")
+    rest.label('list')
     rest.loop()
   LUA
   loop = <<LUA
-    if input == "ls" then
-      rest.exports.dir = rest.exports.original.dir
-      rest.label("list")
-      goto continue
+    if input == 'ls' then
+    	rest.exports.dir = rest.exports.original.dir
+    	rest.label('list')
+    	goto continue
     end
 
     local srv = rest.exports.services[tonumber(input)]
     if srv then
-      rest.exports.dir = srv.dir
-      rest.exports.script = srv.script
-      rest.exports.args = srv.args or {}
-      rest.label("restart") 
-      print('done')
+    	rest.exports.dir = srv.dir
+    	rest.exports.script = srv.script
+    	rest.exports.args = srv.args or {}
+    	rest.label('restart')
+    	print('done')
     end
   LUA
 }
@@ -87,12 +85,12 @@ request "list" {
   query = { dir = exports::try("dir", locals.dir) }
   after = <<LUA
     rest.exports.services = json.decode(rest.res.body)
-      for i, service in ipairs(rest.exports.services) do
-        if not rest.exports.repl then
-            print(("%s %s %s"):format(service.dir, service.script, inspect(service.args)))
-        else
-        print(("%s %s %s %s"):format(i, service.dir, service.script, inspect(service.args)))
-      end
+    for i, service in ipairs(rest.exports.services) do
+    	if not rest.exports.repl then
+    		print(('%s %s %s'):format(service.dir, service.script, inspect(service.args)))
+    	else
+    		print(('%s %s %s %s'):format(i, service.dir, service.script, inspect(service.args)))
+    	end
     end
   LUA
 }
@@ -109,24 +107,22 @@ request "restart" {
   # output since the restart
   after = <<LUA
     if rest.res.status == 404 then
-      print("nothing like that is running")
-      return
+    	print('nothing like that is running')
+    	return
     end
     if rest.res.status ~= 200 and rest.res.status ~= 500 then
-      print(("restart failed: %d %s"):format(rest.res.status, rest.res.body))
-      return
+    	print(('restart failed: %d %s'):format(rest.res.status, rest.res.body))
+    	return
     end
     for _, r in ipairs(json.decode(rest.res.body)) do
-      if r.running then
-        print("restarted, it's running")
-      elseif r.ok then
-        print("restarted, it ran and exited w/ 0")
-      else
-        print("restart failed: " .. (r.error or ""))
-      end
-      if r.output and r.output ~= "" then
-        io.write(r.output)
-      end
+    	if r.running then
+    		print("restarted, it's running")
+    	elseif r.ok then
+    		print('restarted, it ran and exited with 0')
+    	else
+    		print('restart failed: ' .. (r.error or ''))
+    	end
+    	if r.output and r.output ~= '' then io.write(r.output) end
     end
   LUA
 }

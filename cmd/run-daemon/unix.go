@@ -5,16 +5,25 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 
 	"github.com/taybart/run"
 )
 
 func (s *Server) listenUnix() error {
-	os.Remove(run.SocketPath) // clear stale socket
-	defer os.Remove(run.SocketPath)
+	path := run.SocketPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	os.Remove(path) // clear stale socket
+	defer os.Remove(path)
 
-	l, err := net.Listen("unix", run.SocketPath)
+	l, err := net.Listen("unix", path)
 	if err != nil {
+		return err
+	}
+	if err := os.Chmod(path, 0o600); err != nil { // only our user can connect
+		l.Close()
 		return err
 	}
 	defer l.Close()
@@ -59,7 +68,7 @@ func (s *Server) handle(conn net.Conn) {
 		case run.ActionJoin:
 			pl, ok := msg.Payload.(run.Process)
 			if !ok {
-				fmt.Println("join w/o a process")
+				fmt.Println("join without a process")
 				return
 			}
 			leave() // (a second join replaces the first)

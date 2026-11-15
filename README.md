@@ -95,7 +95,7 @@ printed since the restart (the last 4KB). There's one result per matching
 `run`, and the status is `500` if any of them didn't come back up:
 
 ```json
-[{"ok":false,"running":false,"exit_code":1,"error":"exited w/ exit status 1","output":"[ERROR] failed to read site.rest\n"}]
+[{"ok":false,"running":false,"exit_code":1,"error":"exited with exit status 1","output":"[ERROR] failed to read site.rest\n"}]
 ```
 
 `404` means nothing matches. A `run` that doesn't confirm within 5s (ex. an
@@ -112,7 +112,7 @@ $ curl 'http://localhost:19230/logs?dir=/home/user/site&script=rest&args=-s&args
 [{"output":"2025-03-17 13:03:10 [INFO] listening to :8005...\n"}]
 ```
 
-There's one result per matching `run`, each w/ the tail of what it printed
+There's one result per matching `run`, each with the tail of what it printed
 (`truncated` says there was more than it keeps). `404` means nothing matches.
 
 #### the service
@@ -125,7 +125,7 @@ logs in `~/Library/Logs/run-daemon.log`), a systemd user unit on linux
 No root needed. `run-daemon uninstall` stops and removes it.
 
 To update, install the new binary and run `install` again, which restarts the
-service w/ it:
+service with it:
 
 ```sh
 go install ./cmd/run-daemon && run-daemon install
@@ -141,6 +141,16 @@ server): `loginctl enable-linger $USER`.
 There is an mcp endpoint at `http://localhost:19230/mcp` with the same
 `list_scripts` and `restart_script` (which returns the same report as text),
 plus `get_logs` (the tail of a script's output, like `/logs`).
+
+#### security
+
+Everything binds to loopback (`127.0.0.1`) and only answers to loopback `Host`
+headers, so a page open in your browser can't read the logs (DNS rebinding) or
+trigger a restart (cross-site requests). The daemon's unix socket lives in a
+per-user directory and is `0600`, so it can't be reached by another user on a
+shared machine. Logs are served raw, so a script that prints secrets has them
+in `/logs` — anything on the machine as you can already read them, but treat
+the output as sensitive.
 
 # TODO
 
