@@ -3,6 +3,7 @@ package run
 import (
 	"encoding/gob"
 	"net"
+	"sync"
 )
 
 /***
@@ -20,6 +21,7 @@ import (
 
 func init() {
 	gob.Register(Process{})
+	gob.Register(ResetResult{})
 }
 
 const (
@@ -33,12 +35,25 @@ const (
 	ActionJoinAck
 	ActionReset
 	ActionLeave
+	// ActionResetResult is run's reply to a reset (w/ the reset's ID)
+	ActionResetResult
 )
 
 type Message struct {
 	ID      int
 	Action  Action
 	Payload any
+}
+
+// ResetResult is how a restart went: the script is still running after
+// ResetSettle, or it exited (OK if w/ 0), and what it printed since the restart
+type ResetResult struct {
+	OK        bool   `json:"ok"`
+	Running   bool   `json:"running"`
+	ExitCode  int    `json:"exit_code,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Output    string `json:"output"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 type Process struct {
@@ -57,14 +72,19 @@ func (a Action) String() string {
 		return "reset"
 	case ActionLeave:
 		return "leave"
+	case ActionResetResult:
+		return "reset_result"
 	default:
 		return "unknown"
 	}
 }
 
+// Bus is a connection between run and run-daemon, safe to write from
+// several goroutines (one reader)
 type Bus struct {
 	conn net.Conn
 	dec  *gob.Decoder
+	mu   sync.Mutex
 	enc  *gob.Encoder
 }
 
@@ -76,14 +96,13 @@ func NewBus(conn net.Conn) (*Bus, error) {
 			return nil, err
 		}
 	}
-	return &Bus{conn, gob.NewDecoder(conn), gob.NewEncoder(conn)}, nil
+	return &Bus{conn: conn, dec: gob.NewDecoder(conn), enc: gob.NewEncoder(conn)}, nil
 }
 
 func (b *Bus) Write(msg Message) error {
-	if err := b.enc.Encode(msg); err != nil {
-		return err
-	}
-	return nil
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.enc.Encode(msg)
 }
 func (b *Bus) Read() (Message, error) {
 	var msg Message

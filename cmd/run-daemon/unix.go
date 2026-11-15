@@ -44,6 +44,7 @@ func (s *Server) handle(conn net.Conn) {
 		if me != nil {
 			fmt.Printf("leaving %s in directory %s\n", me.script, dir)
 			s.targets.remove(dir, me)
+			close(me.gone)
 			me = nil
 		}
 	}
@@ -64,13 +65,18 @@ func (s *Server) handle(conn net.Conn) {
 			leave() // (a second join replaces the first)
 			fmt.Printf("joining %s in directory %s\n", pl.Script, pl.Dir)
 			dir = pl.Dir
-			me = &Target{key: makeKey(pl), script: pl.Script, args: pl.Args, bus: bus}
+			me = newTarget(pl, bus)
 			s.targets.add(dir, me)
 			if err := me.send(run.Message{Action: run.ActionJoinAck}); err != nil {
 				return
 			}
 		case run.ActionLeave:
 			leave()
+		case run.ActionResetResult:
+			res, ok := msg.Payload.(run.ResetResult)
+			if me != nil && ok {
+				me.replied(msg.ID, res)
+			}
 		default:
 			fmt.Println("unknown or out of order action:", msg.Action)
 		}

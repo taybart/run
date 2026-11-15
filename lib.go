@@ -16,6 +16,13 @@ import (
 	"github.com/taybart/log"
 )
 
+// ResetSettle is how long after a daemon restart run waits to see if the
+// script keeps running, before it reports back
+const ResetSettle = time.Second
+
+// outputLimit is the most output a restart reports (the end of it)
+const outputLimit = 4 << 10
+
 // Do runs script, restarting it on r, a daemon restart, or (w/ watch, a list
 // of file extensions or "*") when files in the working directory change.
 func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) {
@@ -23,7 +30,7 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 	quitch := make(chan bool)
 	reconnch := make(chan bool)
 	reloadch := make(chan bool)
-	donech := make(chan bool)
+	resetch := make(chan int) // daemon restarts, by id (to reply to)
 
 	// signals (ex. kill, a closed terminal) quit like q: the script is in its
 	// own process group, so w/o this it would keep running after run exits
@@ -72,7 +79,7 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 		if daemon != nil {
 			daemon.Close()
 		}
-		daemon = connect(quitch, reloadch, script, scriptArgs)
+		daemon = connect(quitch, resetch, script, scriptArgs)
 	}
 	if tryDaemon {
 		joinDaemon()
@@ -82,10 +89,28 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 		go watch(".", watchExts, pollInterval, reloadch)
 	}
 
+	out := newOutputLog(64 << 10)
+
 	// start script
-	cmd := run(script, scriptArgs, donech)
-	if cmd == nil {
+	p, err := run(script, scriptArgs, out)
+	if err != nil {
+		log.Errorf("could not start script: %s%v%s\n", log.Red, err, log.Reset)
 		return
+	}
+
+	restart := func() (int64, error) {
+		log.Infof("%s\nReloading script...%s\n", log.Green, log.Rtd)
+		if p != nil {
+			kill(p.cmd)
+		}
+		// Small delay to ensure process termination
+		time.Sleep(500 * time.Millisecond)
+		mark := out.mark()
+		var err error
+		if p, err = run(script, scriptArgs, out); err != nil {
+			log.Errorf("could not start script: %s%v%s\n", log.Red, err, log.Reset)
+		}
+		return mark, err
 	}
 
 	for {
@@ -93,8 +118,8 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 		// q/esc/ctrl+c hit
 		case <-quitch:
 			log.Infof("\n%sExiting...%s\n", log.Green, log.Rtd)
-			if cmd != nil && cmd.Process != nil {
-				kill(cmd)
+			if p != nil {
+				kill(p.cmd)
 			}
 			if daemon != nil {
 				daemon.Close() // (leaves right away)
@@ -107,25 +132,24 @@ func Do(script string, scriptArgs []string, tryDaemon bool, watchExts []string) 
 				log.Infof("\n%sReconnecting...%s\n", log.Green, log.Rtd)
 				joinDaemon()
 			}
-		// r hit
+		// r hit (or a watched file changed)
 		case <-reloadch:
-			log.Infof("%s\nReloading script...%s\n", log.Green, log.Rtd)
-			if cmd != nil && cmd.Process != nil {
-				kill(cmd)
-			}
-			// Small delay to ensure process termination
-			time.Sleep(500 * time.Millisecond)
-			cmd = run(script, scriptArgs, donech)
-			if cmd == nil {
-				log.Fatal("Something went wrong")
-			}
-		case <-donech:
-			log.Debug("Script execution completed")
+			restart()
+		case id := <-resetch:
+			mark, err := restart()
+			go report(daemon, id, p, err, out, mark)
 		}
 	}
 }
 
-func run(script string, args []string, donech chan<- bool) *exec.Cmd {
+// proc is one run of the script
+type proc struct {
+	cmd  *exec.Cmd
+	done chan struct{} // closed when it exits, w/ err set
+	err  error
+}
+
+func run(script string, args []string, out io.Writer) (*proc, error) {
 	cmd := exec.Command(script, args...)
 
 	// Set process group for better process management
@@ -133,22 +157,43 @@ func run(script string, args []string, donech chan<- bool) *exec.Cmd {
 		Setpgid: true, // Create a new process group
 	}
 
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = io.MultiWriter(os.Stdout, out)
+	cmd.Stderr = io.MultiWriter(os.Stderr, out)
 
 	if err := cmd.Start(); err != nil {
-		log.Errorf("could not start script: %s%v%s\n", log.Red, err, log.Reset)
-		return nil
+		return nil, err
 	}
-
+	p := &proc{cmd: cmd, done: make(chan struct{})}
 	go func() {
-		cmd.Wait()
-		if donech != nil {
-			donech <- true
-		}
+		p.err = cmd.Wait()
+		close(p.done)
 	}()
+	return p, nil
+}
 
-	return cmd
+// report tells the daemon how restart id went: if the script is still
+// running after ResetSettle (or how it exited), and what it printed.
+func report(daemon *Bus, id int, p *proc, startErr error, out *outputLog, mark int64) {
+	if daemon == nil || id == 0 { // (0: an older daemon, it doesn't wait)
+		return
+	}
+	res := ResetResult{}
+	if startErr != nil {
+		res.Error = "could not start script: " + startErr.Error()
+	} else {
+		select {
+		case <-p.done:
+			res.ExitCode = p.cmd.ProcessState.ExitCode()
+			res.OK = p.err == nil
+			if !res.OK {
+				res.Error = fmt.Sprintf("exited w/ %v", p.err)
+			}
+		case <-time.After(ResetSettle):
+			res.OK, res.Running = true, true
+		}
+	}
+	res.Output, res.Truncated = out.since(mark, outputLimit)
+	daemon.Write(Message{ID: id, Action: ActionResetResult, Payload: res})
 }
 
 func kill(cmd *exec.Cmd) {
@@ -176,7 +221,7 @@ func kill(cmd *exec.Cmd) {
 
 // connect joins run-daemon (nil if it isn't running) and listens to it in
 // the background, closing the bus leaves
-func connect(quitch, reloadch chan bool, script string, scriptArgs []string) *Bus {
+func connect(quitch chan bool, resetch chan int, script string, scriptArgs []string) *Bus {
 	workingDir, err := os.Getwd()
 	if err != nil {
 		fmt.Printf("%sError getting working directory: %s%s\n", log.Red, err, log.Rtd)
@@ -193,11 +238,11 @@ func connect(quitch, reloadch chan bool, script string, scriptArgs []string) *Bu
 		bus.Close()
 		return nil
 	}
-	go listen(bus, quitch, reloadch)
+	go listen(bus, quitch, resetch)
 	return bus
 }
 
-func listen(bus *Bus, quitch, reloadch chan bool) {
+func listen(bus *Bus, quitch chan bool, resetch chan int) {
 	for {
 		msg, err := bus.Read()
 		if err != nil {
@@ -211,7 +256,7 @@ func listen(bus *Bus, quitch, reloadch chan bool) {
 		case ActionJoinAck:
 			fmt.Printf("%sRegistered with daemon%s\n", log.ItalicGreen, log.Rtd)
 		case ActionReset:
-			reloadch <- true
+			resetch <- msg.ID
 		case ActionLeave:
 			quitch <- true
 		}

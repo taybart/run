@@ -6,7 +6,7 @@ locals {
   url    = "http://localhost:19230"
   dir    = env("PWD")
   script = ""
-  args   = {}
+  args   = [] # (a list: {} would be sent as an object, which the daemon rejects)
 }
 
 cli {
@@ -84,7 +84,7 @@ cli {
 
 request "list" {
   url   = "${locals.url}/list"
-  query = { dir = try_exports("dir", locals.dir) }
+  query = { dir = exports::try("dir", locals.dir) }
   after = <<LUA
     rest.exports.services = json.decode(rest.res.body)
       for i, service in ipairs(rest.exports.services) do
@@ -101,12 +101,34 @@ request "restart" {
   url    = "${locals.url}/restart"
   method = "POST"
   body = {
-    dir    = try_exports("dir", locals.dir),
-    script = try_exports("script", locals.script)
-    args   = try_exports("args", locals.args)
+    dir    = exports::try("dir", locals.dir),
+    script = exports::try("script", locals.script)
+    args   = exports::try("args", locals.args)
   }
-  expect = 200
-  after  = [lib.expected]
+  # one result per matching run: still running (or how it exited) and its
+  # output since the restart
+  after = <<LUA
+    if rest.res.status == 404 then
+      print("nothing like that is running")
+      return
+    end
+    if rest.res.status ~= 200 and rest.res.status ~= 500 then
+      print(("restart failed: %d %s"):format(rest.res.status, rest.res.body))
+      return
+    end
+    for _, r in ipairs(json.decode(rest.res.body)) do
+      if r.running then
+        print("restarted, it's running")
+      elseif r.ok then
+        print("restarted, it ran and exited w/ 0")
+      else
+        print("restart failed: " .. (r.error or ""))
+      end
+      if r.output and r.output ~= "" then
+        io.write(r.output)
+      end
+    end
+  LUA
 }
 
 request "mcp.list_tools" {

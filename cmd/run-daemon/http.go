@@ -51,17 +51,29 @@ func (s *Server) handleRestart() http.HandlerFunc {
 			return
 		}
 		fmt.Printf("restarting: dir(%s) $ %s %s\n", req.Dir, req.Script, strings.Join(req.Args, " "))
-		n, err := s.targets.restart(req)
+		results, err := s.targets.restart(req)
 		if errors.Is(err, errNotFound) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		// one result per instance, 500 if any didn't come back up
+		w.Header().Set("Content-Type", "application/json")
+		if !allOK(results) {
+			w.WriteHeader(http.StatusInternalServerError)
 		}
-		fmt.Fprintf(w, "restarted %s (%d)\n", req.Script, n)
+		if err := json.NewEncoder(w).Encode(results); err != nil {
+			fmt.Println(err)
+		}
 	}
+}
+
+func allOK(results []run.ResetResult) bool {
+	for _, r := range results {
+		if !r.OK {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) listenHTTP() error {

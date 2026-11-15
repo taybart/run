@@ -2,8 +2,9 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/taybart/run"
 )
@@ -57,7 +58,7 @@ var mcpTools = []mcpTool{
 	},
 	{
 		Name:        "restart_script",
-		Description: "Restart a script registered with the run daemon",
+		Description: "Restart a script registered with the run daemon. Waits ~1s and reports whether it's still running (or how it exited) along with its output since the restart, so a failed start (ex. a syntax error) shows up here.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -161,18 +162,47 @@ func (s *Server) mcpListScripts(args json.RawMessage) (*mcpCallResult, *rpcError
 	return &mcpCallResult{Content: []mcpContent{{Type: "text", Text: string(text)}}}, nil
 }
 
+// describeRestart says how each instance's restart went, w/ its output (so
+// the caller can see it came up, or why it didn't)
+func describeRestart(script string, results []run.ResetResult) string {
+	var b strings.Builder
+	for i, r := range results {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		switch {
+		case r.Running:
+			fmt.Fprintf(&b, "restarted %s, it's running", script)
+		case r.OK:
+			fmt.Fprintf(&b, "restarted %s, it ran and exited w/ 0", script)
+		default:
+			fmt.Fprintf(&b, "restarting %s failed: %s", script, r.Error)
+		}
+		if r.Output != "" {
+			cut := ""
+			if r.Truncated {
+				cut = " (the end of it)"
+			}
+			fmt.Fprintf(&b, "\noutput since the restart%s:\n%s", cut, r.Output)
+		} else if r.Error == "" || r.ExitCode != 0 {
+			b.WriteString("\n(no output since the restart)")
+		}
+	}
+	return b.String()
+}
+
 func (s *Server) mcpRestartScript(args json.RawMessage) (*mcpCallResult, *rpcError) {
 	var req run.Process
 	if err := json.Unmarshal(args, &req); err != nil || req.Dir == "" || req.Script == "" {
 		return nil, &rpcError{Code: -32602, Message: "dir and script are required"}
 	}
 
-	if _, err := s.targets.restart(req); err != nil {
-		text := "failed to restart " + req.Script + ": " + err.Error()
-		if errors.Is(err, errNotFound) {
-			text = errNotFound.Error()
-		}
-		return &mcpCallResult{Content: []mcpContent{{Type: "text", Text: text}}, IsError: true}, nil
+	results, err := s.targets.restart(req)
+	if err != nil {
+		return &mcpCallResult{Content: []mcpContent{{Type: "text", Text: err.Error()}}, IsError: true}, nil
 	}
-	return &mcpCallResult{Content: []mcpContent{{Type: "text", Text: "restarted " + req.Script}}}, nil
+	return &mcpCallResult{
+		Content: []mcpContent{{Type: "text", Text: describeRestart(req.Script, results)}},
+		IsError: !allOK(results),
+	}, nil
 }
