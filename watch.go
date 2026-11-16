@@ -17,7 +17,7 @@ import (
 
 // pollInterval is how often the tree is checked, a change restarts the script
 // once a check sees nothing new (so a burst of saves is one restart)
-const pollInterval = 500 * time.Millisecond
+const pollInterval = 150 * time.Millisecond
 
 type fileStat struct {
 	mod  time.Time
